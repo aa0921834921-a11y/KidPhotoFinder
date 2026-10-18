@@ -44,6 +44,9 @@ jobs:
 
       - name: 產生 Android 專案
         run: npx expo prebuild -p android --clean --no-install
+        
+      - name: 修正人臉辨識套件和新版 Gradle 不相容
+        run: sed -i 's/if (VersionNumber.parse(REACT_NATIVE_VERSION) < VersionNumber.parse("0.71"))/if (false)/' node_modules/onnxruntime-react-native/android/build.gradle  
 
       - name: 準備簽章（有設定 Secrets 才用自己的，沒有就用預設簽章）
         env:
