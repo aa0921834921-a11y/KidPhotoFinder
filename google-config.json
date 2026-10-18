@@ -1,0 +1,5 @@
+{
+  "_說明": "照 SETUP.md 第 3 步，把 Google Cloud 給你的兩個用戶端 ID 貼在這裡",
+  "iosClientId": "請貼上-iOS-用戶端ID.apps.googleusercontent.com",
+  "webClientId": "請貼上-網頁應用程式-用戶端ID.apps.googleusercontent.com"
+}

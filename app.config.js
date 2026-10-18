@@ -1,0 +1,53 @@
+// Expo 設定。Google 登入需要的 ID 放在 google-config.json（見 SETUP.md）。
+const g = require('./google-config.json');
+const reversed = (id) => id.split('.').reverse().join('.');
+// GitHub Actions 每次打包的編號（讓新版可以直接覆蓋安裝舊版）
+const build = Number(process.env.KPF_BUILD_NUMBER) || 1;
+
+module.exports = {
+  expo: {
+    name: '幼稚園照片小幫手',
+    slug: 'kid-photo-finder',
+    scheme: 'kidphotofinder',
+    version: `1.0.${build}`,
+    orientation: 'portrait',
+    icon: './assets/icon.png',
+    userInterfaceStyle: 'light',
+    backgroundColor: '#F7EFE0',
+    splash: { image: './assets/splash-icon.png', resizeMode: 'contain', backgroundColor: '#F7EFE0' },
+    ios: {
+      bundleIdentifier: 'tw.kidphotofinder.app',
+      supportsTablet: false,
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+        NSPhotoLibraryUsageDescription: '用來選小孩的參考照片，以及把找到的照片存進「幼稚園照片」相簿。',
+        NSPhotoLibraryAddUsageDescription: '把找到的小孩照片存進你的相簿。',
+      },
+    },
+    android: {
+      package: 'tw.kidphotofinder.app',
+      versionCode: build,
+      adaptiveIcon: { foregroundImage: './assets/android-icon-foreground.png', backgroundColor: '#F7EFE0' },
+      permissions: ['POST_NOTIFICATIONS'],
+    },
+    plugins: [
+      'expo-router',
+      'expo-sqlite',
+      'expo-font',
+      'expo-background-task',
+      ['expo-notifications', { color: '#C97A7B' }],
+      ['expo-media-library', {
+        photosPermission: '用來選小孩的參考照片，以及把找到的照片存進「幼稚園照片」相簿。',
+        savePhotosPermission: '把找到的小孩照片存進你的相簿。',
+        isAccessMediaLocationEnabled: false,
+      }],
+      ['expo-image-picker', { photosPermission: '用來選小孩的參考照片。', cameraPermission: false, microphonePermission: false }],
+      ['@react-native-google-signin/google-signin', { iosUrlScheme: reversed(g.iosClientId) }],
+      ['expo-build-properties', { ios: { deploymentTarget: '16.4' }, android: { minSdkVersion: 26, enableMinifyInReleaseBuilds: false, buildArchs: ['arm64-v8a'] } }],
+      './plugins/withOrtAndroid',
+      './plugins/withAndroidRelease',
+    ],
+    experiments: { typedRoutes: false },
+    extra: { iosClientId: g.iosClientId, webClientId: g.webClientId },
+  },
+};

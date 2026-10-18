@@ -1,0 +1,307 @@
+import { router, useFocusEffect } from 'expo-router';
+import { Image } from 'expo-image';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import { THRESHOLDS } from '../../core/decide';
+import * as DB from '../../services/db';
+import { refreshCounts, scheduleApply } from '../../services/scanner';
+import { useApp } from '../../services/state';
+import { FaceCard } from '../../ui/FaceCard';
+import { Btn, Card, cardStyle, Empty, H2, HeadCard, Icon, Link, P, Paper, Seg, Stamp, Tape, useContentWidth } from '../../ui/kit';
+import { makeStyles, useTheme, type Theme } from '../../ui/theme';
+import { usePreview } from '../../ui/usePreview';
+
+const PAGE_N = 24;
+type Mark = 1 | -1 | 0; // 是 / 不是 / 跳過
+
+/* ---------------------------------------------------------------- 一張一張看：可以左右滑的卡片 */
+
+function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number; onAnswer: (m: Mark) => void }) {
+  const t = useTheme();
+  const s = useStyles();
+  const w = useContentWidth(16);
+  const cardW = Math.min(w - 50, 300);
+  const photo = cardW - 20;
+  const drag = useRef(new Animated.Value(0)).current;
+  const busy = useRef(false);
+  const moved = useRef(0); // 剛拖過卡片的時間：避免放手時又被當成「點一下」
+  const ctx = usePreview(item.fileId, 256);
+
+  useEffect(() => { drag.setValue(0); busy.current = false; }, [item.faceId, drag]);
+
+  const fly = useCallback((m: Mark) => {
+    if (busy.current) return;
+    busy.current = true;
+    Animated.timing(drag, { toValue: m === 0 ? 0 : m * 520, duration: m === 0 ? 1 : 230, easing: Easing.in(Easing.quad), useNativeDriver: true })
+      .start(() => onAnswer(m));
+  }, [drag, onAnswer]);
+
+  const pan = usePanGesture({
+    activeOffsetX: [-8, 8],
+    runOnJS: true,
+    onActivate: () => { moved.current = Date.now(); },
+    onUpdate: (e) => { if (!busy.current) drag.setValue(e.translationX); },
+    onDeactivate: (e) => {
+      moved.current = Date.now();
+      if (busy.current) return;
+      if (Math.abs(e.translationX) > 90 || Math.abs(e.velocityX) > 800) fly(e.translationX > 0 ? 1 : -1);
+      else Animated.spring(drag, { toValue: 0, useNativeDriver: true, friction: 6 }).start();
+    },
+  });
+
+  const rotate = drag.interpolate({ inputRange: [-300, 0, 300], outputRange: ['-18deg', '-2deg', '18deg'], extrapolate: 'clamp' });
+  const yesOp = drag.interpolate({ inputRange: [0, 110], outputRange: [0, 1], extrapolate: 'clamp' });
+  const noOp = drag.interpolate({ inputRange: [-110, 0], outputRange: [1, 0], extrapolate: 'clamp' });
+  const rounded = t.id !== 'watercolor' && t.id !== 'book';
+
+  return (
+    <View style={{ alignItems: 'center', gap: 14, paddingTop: 6 }}>
+      <View style={[s.tip, { alignSelf: 'stretch', alignItems: 'center' }]}>
+        <Text style={s.tipText}>往右滑＝<Text style={[s.chip, { backgroundColor: t.c.yes }]}> ✓ 是 </Text>　往左滑＝<Text style={[s.chip, { backgroundColor: t.c.no }]}> ✕ 不是 </Text></Text>
+      </View>
+      <View style={{ width: cardW, height: photo + 46 }}>
+        <View style={[s.cardBack, { borderRadius: rounded ? 24 : 6 }]} />
+        <GestureDetector gesture={pan}>
+          <View style={StyleSheet.absoluteFill} collapsable={false}>
+          <Animated.View style={[s.fcard, rounded && { borderRadius: t.id === 'candy' ? 26 : 24, paddingBottom: t.captions ? 36 : 10 }, t.id === 'candy' && s.fcardCandy,
+            { transform: [{ translateX: drag }, { rotate }] }]}>
+            <Tape i={0} />
+            <Pressable onPress={() => { if (Date.now() - moved.current > 400 && !busy.current) router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } }); }} accessibilityLabel="看整張照片">
+              <FaceCard faceId={item.faceId} size={photo} radius={rounded ? 18 : 0} />
+            </Pressable>
+            {t.captions ? <Text style={s.cap3} numberOfLines={1}>{item.folder.split('/').pop()}</Text> : null}
+            <Animated.View style={[s.stamp, s.stampYes, { opacity: yesOp }]}><Text style={[s.stampText, { color: t.c.yes }]}>★ 是</Text></Animated.View>
+            <Animated.View style={[s.stamp, s.stampNo, { opacity: noOp }]}><Text style={[s.stampText, { color: t.c.noDeep }]}>✕ 不是</Text></Animated.View>
+          </Animated.View>
+          </View>
+        </GestureDetector>
+      </View>
+      <Pressable style={s.ctx} onPress={() => router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } })}>
+        <View style={s.ctxImg}>{ctx ? <Image source={{ uri: ctx }} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}</View>
+        <Text style={s.ctxText}>點這裡看整張照片　·　還有 {left} 張</Text>
+      </Pressable>
+      <View style={{ flexDirection: 'row', gap: 12, alignSelf: 'stretch' }}>
+        <Btn kind="no" title="✕ 不是" style={{ flex: 1 }} onPress={() => fly(-1)} />
+        <Btn kind="yes" title="★ 是" style={{ flex: 1 }} onPress={() => fly(1)} />
+      </View>
+      <Link title="看不出來，先跳過" color={t.c.muted} onPress={() => fly(0)} />
+    </View>
+  );
+}
+
+/* ---------------------------------------------------------------- 畫面 */
+
+export default function Review() {
+  const t = useTheme();
+  const s = useStyles();
+  const version = useApp((x) => x.version);
+  const running = useApp((x) => x.running);
+  const w = useContentWidth(16);
+  const [items, setItems] = useState<DB.ReviewItem[]>([]);
+  const [thr, setThr] = useState(0.48);
+  const [marks, setMarks] = useState<Record<number, Mark>>({});
+  const [mode, setMode] = useState<'page' | 'one'>('page');
+  const [labeled, setLabeled] = useState<Awaited<ReturnType<typeof DB.labeledList>>>([]);
+  const [tab, setTab] = useState<'todo' | 'done'>('todo');
+  const [busy, setBusy] = useState(false);
+  const skipped = useRef(new Set<number>());
+
+  const load = useCallback(async () => {
+    const st = await DB.getSettings();
+    const th = (THRESHOLDS[st.strictness] || THRESHOLDS.standard)[0];
+    setThr(th);
+    const list = await DB.decisionsList('review');
+    // 跳過的放到最後
+    list.sort((a, b) => Number(skipped.current.has(a.faceId)) - Number(skipped.current.has(b.faceId)));
+    setItems(list);
+    setMarks({});
+    setLabeled(await DB.labeledList());
+  }, []);
+  useFocusEffect(useCallback(() => { load(); }, [load, version]));
+
+  const page = items.slice(0, PAGE_N);
+  const cols = w > 560 ? 5 : 3;
+  const gap = 10;
+  const cell = Math.floor((w - (cols - 1) * gap) / cols);
+  const lcols = w > 560 ? 6 : 4;
+  const lcell = Math.floor((w - (lcols - 1) * 8) / lcols);
+
+  const commit = async (pairs: [number, Mark][]) => {
+    setBusy(true);
+    try {
+      for (const [id, m] of pairs) {
+        if (m) await DB.setLabel(id, m);
+        else skipped.current.add(id);
+      }
+      const done = new Set(pairs.map(([id]) => id));
+      setItems((xs) => {
+        const rest = xs.filter((x) => !done.has(x.faceId));
+        const sk = xs.filter((x) => done.has(x.faceId) && skipped.current.has(x.faceId));
+        return [...rest, ...sk];
+      });
+      setMarks({});
+      scheduleApply();
+      await refreshCounts();
+      setLabeled(await DB.labeledList());
+    } finally { setBusy(false); }
+  };
+
+  // 很像的先幫忙打勾
+  const marksFull = useMemo(() => {
+    const m = { ...marks };
+    for (const it of page) if (m[it.faceId] === undefined) m[it.faceId] = it.score >= thr - 0.03 ? 1 : 0;
+    return m;
+  }, [marks, page, thr]);
+
+  const cycle = (id: number) => setMarks((m) => {
+    const cur = marksFull[id] ?? 0;
+    return { ...marksFull, ...m, [id]: (cur === 0 ? 1 : cur === 1 ? -1 : 0) as Mark };
+  });
+
+  const undo = (minutes: number) => {
+    DB.undoLabelsSince(minutes, true).then((n) => {
+      if (!n) { Alert.alert('沒有可以復原的', `最近 ${minutes >= 60 ? minutes / 60 + ' 小時' : minutes + ' 分鐘'}沒有標記。`); return; }
+      Alert.alert('復原標記？', `會把最近 ${n} 個標記取消，照片回到待確認（已存進相簿的照片不會被刪）。`, [
+        { text: '取消', style: 'cancel' },
+        { text: '復原', style: 'destructive', onPress: async () => { await DB.undoLabelsSince(minutes); skipped.current.clear(); scheduleApply(); await refreshCounts(); load(); } },
+      ]);
+    });
+  };
+
+  const one = page[0];
+  const nYes = page.filter((p) => marksFull[p.faceId] === 1).length;
+  const nNo = page.filter((p) => marksFull[p.faceId] === -1).length;
+  const showFoot = tab === 'todo' && mode === 'page' && items.length > 0;
+
+  return (
+    <Paper cap="確認照片">
+      <ScrollView contentContainerStyle={[s.scroll, showFoot && { paddingBottom: 190 }]} showsVerticalScrollIndicator={false}>
+        <HeadCard title="這是我家寶貝嗎？" sub="小幫手不太確定的照片放在這裡。你回答越多，下次就越準。">
+          <Seg style={{ marginTop: 12 }} value={tab} onChange={setTab}
+            items={[{ k: 'todo', t: `待確認 ${items.length}` }, { k: 'done', t: `我標記過的 ${labeled.length}` }]} />
+        </HeadCard>
+
+        {tab === 'todo' ? (
+          !items.length ? (
+            <Empty title="都確認完了 ♡" body={running ? '小幫手正在整理，等等可能會有新的。' : '有新照片時會再請你幫忙。'} />
+          ) : (
+            <>
+              <View style={s.modes}>
+                {(['page', 'one'] as const).map((k) => (
+                  <Pressable key={k} onPress={() => setMode(k)} style={[s.modeBtn, mode === k && { backgroundColor: t.c.segOn }]} accessibilityRole="tab" accessibilityState={{ selected: mode === k }}>
+                    <Text style={[s.modeText, mode === k && { color: t.c.segOnText }]}>{k === 'page' ? '一次一整頁' : '一張一張看'}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {mode === 'page' ? (
+                <>
+                  <View style={s.tip}>
+                    <Text style={s.tipText}>
+                      點一下臉就能切換：<Text style={[s.chip, { backgroundColor: t.c.yes }]}> ✓ 是 </Text> → <Text style={[s.chip, { backgroundColor: t.c.no }]}> ✕ 不是 </Text> → <Text style={[s.chip, { backgroundColor: t.c.skip }]}> 不選 </Text>
+                    </Text>
+                    <Text style={s.tipSmall}>很像你家小孩的已經先幫你打勾；沒選的不會被標記，會留到之後再問。長按可以看整張照片。</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap }}>
+                    {page.map((it) => {
+                      const m = marksFull[it.faceId] ?? 0;
+                      return (
+                        <Pressable key={it.faceId} onPress={() => cycle(it.faceId)} accessibilityLabel={m === 1 ? '是' : m === -1 ? '不是' : '先不選'}
+                          onLongPress={() => router.push({ pathname: '/viewer', params: { id: it.fileId, face: String(it.faceId) } })}
+                          style={({ pressed }) => pressed ? { transform: [{ scale: 0.95 }] } : null}>
+                          <View style={[s.pf, { width: cell, height: cell }, m === 1 && { borderColor: t.c.yes }, m === -1 && { borderColor: t.c.no }]}>
+                            <FaceCard faceId={it.faceId} size={cell - 14} radius={t.id === 'candy' ? 14 : 9} style={m === -1 ? { opacity: 0.55 } : undefined} />
+                            {m === 1 ? <View style={s.mkYes}><Stamp yes size={28} /></View> : null}
+                            {m === -1 ? <View style={s.mkNo}><Stamp yes={false} size={40} /></View> : null}
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : one ? (
+                <SwipeCard item={one} left={items.length} onAnswer={(m) => commit([[one.faceId, m]])} />
+              ) : null}
+            </>
+          )
+        ) : (
+          <>
+            <Card tint={t.c.note} pad={16}>
+              <H2 style={{ fontSize: 16 }}>按錯了嗎？</H2>
+              <P muted style={{ fontSize: 13 }}>可以把最近的標記一次取消（已存進相簿的照片不會被刪）。</P>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <Btn small kind="ghost" title="最近 30 分鐘" onPress={() => undo(30)} style={{ flex: 1 }} icon={<Icon name="undo" size={17} />} />
+                <Btn small kind="ghost" title="最近 3 小時" onPress={() => undo(180)} style={{ flex: 1 }} />
+              </View>
+            </Card>
+            <P muted style={{ fontSize: 13, textAlign: labeled.length ? 'left' : 'center' }}>{labeled.length ? '點一下可以改答案。' : '還沒有標記過。到「待確認」點一點吧。'}</P>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {labeled.slice(0, 160).map((l) => (
+                <Pressable key={l.face_id} onPress={async () => {
+                  await DB.setLabel(l.face_id, l.label > 0 ? -1 : 1);
+                  setLabeled(await DB.labeledList()); scheduleApply();
+                }}>
+                  <View style={[s.pf, s.pfSm, { width: lcell, height: lcell, borderColor: l.label > 0 ? t.c.yes : t.c.no }]}>
+                    <FaceCard faceId={l.face_id} size={lcell - 12} radius={8} />
+                    <View style={s.mkSm}><Stamp yes={l.label > 0} size={22} /></View>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        )}
+      </ScrollView>
+
+      {showFoot ? (
+        <View style={s.foot} pointerEvents="box-none">
+          <View style={[cardStyle(t), s.footc]}>
+            <Text style={s.cnt}>
+              <Text style={{ color: t.c.yes }}>{nYes} 張是</Text>、<Text style={{ color: t.c.noDeep }}>{nNo} 張不是</Text>、{page.length - nYes - nNo} 張先不選
+            </Text>
+            <Btn busy={busy} title="儲存這頁，下一頁" onPress={() => commit(page.map((p) => [p.faceId, marksFull[p.faceId] ?? 0]))} />
+            <Btn small kind="ghost" title="這頁全部都不是" onPress={() => commit(page.map((p) => [p.faceId, -1]))} />
+          </View>
+        </View>
+      ) : null}
+    </Paper>
+  );
+}
+
+const useStyles = makeStyles((t: Theme) => {
+  const c = t.c;
+  return StyleSheet.create({
+    scroll: { padding: 16, paddingTop: t.id === 'book' ? 12 : 14, paddingBottom: 40, gap: 14 },
+    modes: { flexDirection: 'row', alignSelf: 'flex-start', gap: 4, padding: 4, borderRadius: 999, backgroundColor: c.accentWash, borderWidth: 1, borderColor: c.line },
+    modeBtn: { paddingVertical: 7, paddingHorizontal: 16, borderRadius: 999 },
+    modeText: { ...t.round, fontSize: 14, color: c.ink2 },
+    tip: { paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: c.dash, backgroundColor: c.card2 },
+    tipText: { ...t.round, fontSize: 13, lineHeight: 24, color: c.ink2 },
+    tipSmall: { ...t.round, fontSize: 12, lineHeight: 19, color: c.muted, marginTop: 2 },
+    chip: { color: t.dark ? '#10162E' : '#FFFFFF', fontSize: 12, borderRadius: 99, overflow: 'hidden' },
+    pf: {
+      padding: 4, borderRadius: t.id === 'candy' ? 20 : 14, borderWidth: 3, borderColor: 'transparent', backgroundColor: c.card2, alignItems: 'center', justifyContent: 'center',
+      boxShadow: t.id === 'candy' ? '0px 4px 0px #F4CDE0' : t.dark ? 'none' : '0px 4px 10px rgba(138,103,68,0.14)',
+    } as ViewStyle,
+    pfSm: { padding: 3, borderRadius: 12 },
+    mkYes: { position: 'absolute', right: 6, bottom: 6 },
+    mkNo: { position: 'absolute', left: '50%', top: '50%', marginLeft: -20, marginTop: -20 },
+    mkSm: { position: 'absolute', right: 3, bottom: 3 },
+
+    foot: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingBottom: 10 },
+    footc: { padding: 12, gap: 8, boxShadow: t.dark ? '0px -6px 24px rgba(0,0,0,0.4)' : '0px 8px 22px rgba(138,103,68,0.22)' } as ViewStyle,
+    cnt: { ...t.round, fontSize: 13, color: c.muted, textAlign: 'center' },
+
+    cardBack: { position: 'absolute', left: 14, right: 14, top: 14, bottom: -6, backgroundColor: c.pol, transform: [{ rotate: '-4deg' }], opacity: 0.9, boxShadow: '0px 6px 14px rgba(0,0,0,0.12)' } as ViewStyle,
+    fcard: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, padding: 10, paddingBottom: 36, backgroundColor: c.pol, borderRadius: 4, boxShadow: '0px 14px 28px rgba(80,50,30,0.26)' } as ViewStyle,
+    fcardCandy: { boxShadow: '0px 6px 0px #F4CDE0, 0px 0px 0px 2px #F3D6E6' } as ViewStyle,
+    cap3: { ...t.round, position: 'absolute', left: 0, right: 0, bottom: 9, textAlign: 'center', fontSize: 13, color: c.polCap },
+    stamp: { position: 'absolute', top: 26, paddingVertical: 5, paddingHorizontal: 13, borderRadius: 12, borderWidth: 3, backgroundColor: 'rgba(255,255,255,0.9)' },
+    stampYes: { left: 20, borderColor: c.yes, transform: [{ rotate: '-14deg' }] },
+    stampNo: { right: 20, borderColor: c.noDeep, transform: [{ rotate: '14deg' }] },
+    stampText: { ...t.title, fontSize: 22 },
+    ctx: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    ctxImg: { width: 46, height: 46, borderRadius: 8, overflow: 'hidden', borderWidth: 2, borderColor: c.pol, backgroundColor: c.line },
+    ctxText: { ...t.round, fontSize: 12.5, color: c.muted },
+  });
+});
