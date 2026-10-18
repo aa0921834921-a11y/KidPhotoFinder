@@ -31,6 +31,8 @@ export function db(): Promise<SQLite.SQLiteDatabase> {
     dbp = (async () => {
       const d = await SQLite.openDatabaseAsync('kidphoto.db');
       await d.execAsync(SCHEMA);
+      // 手機相簿（LINE 下載）的照片記住是哪個相簿來的
+      await d.execAsync('ALTER TABLE files ADD COLUMN src_album TEXT').catch(() => {});
       return d;
     })();
   }
@@ -64,7 +66,7 @@ export type Settings = {
 
 export const DEFAULT_SETTINGS: Settings = {
   folderId: null, folderName: null, strictness: 'standard', autoDaily: true, videos: false,
-  wifiOnly: true, albumName: '幼稚園照片', notify: true, onboarded: false,
+  wifiOnly: true, albumName: '童年拾光', notify: true, onboarded: false,
 };
 
 export async function getSettings(): Promise<Settings> {
@@ -124,7 +126,7 @@ export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w
 export async function filesToScan(includeVideos: boolean): Promise<FileRow[]> {
   const d = await db();
   return d.getAllAsync<FileRow>(
-    `SELECT * FROM files WHERE status = 'new' ${includeVideos ? '' : "AND kind = 'image'"} ORDER BY modified DESC`);
+    `SELECT * FROM files WHERE status = 'new' AND id NOT LIKE 'local:%' ${includeVideos ? '' : "AND kind = 'image'"} ORDER BY modified DESC`);
 }
 
 export async function saveScan(fileId: string, faces: { frame: number; box: number[]; emb: Float32Array }[], w: number, h: number) {
@@ -308,4 +310,42 @@ export async function lastRuns(limit = 30) {
 export async function resetAll() {
   const d = await db();
   await d.execAsync('DELETE FROM files; DELETE FROM faces; DELETE FROM labels; DELETE FROM decisions; DELETE FROM saved; DELETE FROM runs;');
+}
+
+/* ---------------------------------------------------------------- 手機相簿（LINE 下載）的照片 */
+
+export async function localFileIds(): Promise<Set<string>> {
+  const d = await db();
+  const rows = await d.getAllAsync<{ id: string }>("SELECT id FROM files WHERE id LIKE 'local:%'");
+  return new Set(rows.map((r) => r.id));
+}
+
+export async function addLocalFile(id: string, name: string, albumTitle: string, createdMs: number, albumId: string) {
+  const d = await db();
+  const t = new Date(createdMs), p = (n: number) => String(n).padStart(2, '0');
+  const modified = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+  await d.runAsync(
+    'INSERT OR IGNORE INTO files(id, name, folder, mime, size, modified, md5, kind, status, seen_at, src_album) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    id, name, `手機相簿/${albumTitle}`, 'image/jpeg', 0, modified, null, 'image', 'new', now(), albumId);
+}
+
+export async function localFilesIn(albumId: string, sinceMs: number) {
+  const d = await db();
+  const t = new Date(sinceMs), p = (n: number) => String(n).padStart(2, '0');
+  const since = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+  return d.getAllAsync<{ id: string; name: string; status: string }>(
+    "SELECT id, name, status FROM files WHERE id LIKE 'local:%' AND src_album = ? AND modified >= ? ORDER BY modified", albumId, since);
+}
+
+/** 照片已經從手機刪掉：把它的紀錄也清掉 */
+export async function forgetLocalFiles(ids: string[]) {
+  const d = await db();
+  await d.withTransactionAsync(async () => {
+    for (const id of ids) {
+      await d.runAsync('DELETE FROM labels WHERE face_id IN (SELECT id FROM faces WHERE file_id = ?)', id);
+      await d.runAsync('DELETE FROM faces WHERE file_id = ?', id);
+      await d.runAsync('DELETE FROM decisions WHERE file_id = ?', id);
+      await d.runAsync('DELETE FROM files WHERE id = ?', id);
+    }
+  });
 }

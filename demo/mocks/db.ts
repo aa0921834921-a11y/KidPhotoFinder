@@ -4,7 +4,7 @@ const q = new URLSearchParams((globalThis as any).location?.search || '');
 const p = (n: number) => String(n).padStart(2, '0');
 export const now = () => { const d = new Date(); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
 export type Settings = { folderId: string | null; folderName: string | null; strictness: 'loose' | 'standard' | 'strict'; autoDaily: boolean; videos: boolean; wifiOnly: boolean; albumName: string; notify: boolean; onboarded: boolean };
-export const DEFAULT_SETTINGS: Settings = { folderId: 'f', folderName: '115-1 健康班', strictness: 'standard', autoDaily: true, videos: false, wifiOnly: true, albumName: '幼稚園照片', notify: true, onboarded: q.get('ob') !== '1' };
+export const DEFAULT_SETTINGS: Settings = { folderId: 'f', folderName: '115-1 健康班', strictness: 'standard', autoDaily: true, videos: false, wifiOnly: true, albumName: '童年拾光', notify: true, onboarded: q.get('ob') !== '1' };
 let settings = { ...DEFAULT_SETTINGS };
 export async function getSettings() { return { ...settings }; }
 export async function saveSettings(x: Partial<Settings>) { settings = { ...settings, ...x }; return { ...settings }; }

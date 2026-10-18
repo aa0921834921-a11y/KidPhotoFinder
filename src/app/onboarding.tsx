@@ -63,7 +63,7 @@ export default function Onboarding() {
     <Paper>
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 48, gap: 14 }}>
         {t.art === 'watercolor' ? <Image source={art.children} style={{ width: '100%', height: 90 }} contentFit="contain" /> : <View style={{ alignItems: 'center', paddingVertical: 8 }}><Logo size={72} /></View>}
-        <H1>歡迎使用{'\n'}幼稚園照片小幫手 ♡</H1>
+        <H1>歡迎使用{'\n'}童年拾光 ♡</H1>
         <P muted>五個小步驟，之後每天會自動幫你把孩子的照片收進手機相簿。</P>
 
         <Step n={1} title="下載辨識模型" done={model} active={step === 1}>
@@ -92,7 +92,7 @@ export default function Onboarding() {
         </Step>
 
         <Step n={5} title="允許存照片和通知" done={false} active={step === 5}>
-          <P muted style={{ fontSize: 13 }}>找到的照片會存進「照片」App 的「幼稚園照片」相簿；有新照片時會通知你。</P>
+          <P muted style={{ fontSize: 13 }}>找到的照片會存進「照片」App 的「童年拾光」相簿；有新照片時會通知你。</P>
           <Btn busy={busy} title="完成，開始使用 ✿" onPress={finish} />
         </Step>
       </ScrollView>

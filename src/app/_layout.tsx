@@ -40,6 +40,7 @@ export default function Root() {
           <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
           <Stack.Screen name="viewer" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
           <Stack.Screen name="logs" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="clean" options={{ presentation: 'modal' }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

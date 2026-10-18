@@ -96,7 +96,7 @@ export default function Home() {
           <View style={s.brand}>
             <Logo size={40} />
             <View style={{ flex: 1 }}>
-              <Text style={s.brandName}>幼稚園照片小幫手</Text>
+              <Text style={s.brandName}>童年拾光</Text>
               <Text style={s.brandSub}>收藏每一個成長瞬間</Text>
             </View>
             <Pressable style={s.bell} onPress={() => router.push('/logs')} accessibilityLabel="執行紀錄">
@@ -177,6 +177,17 @@ export default function Home() {
             </View>
           </Pressable>
         ) : null}
+
+        {/* 整理 LINE 照片 */}
+        <Pressable onPress={() => router.push('/clean')} style={({ pressed }) => [cardStyle(t), s.line, pressed && { transform: [{ scale: 0.99 }] }]}
+          accessibilityRole="button" accessibilityLabel="整理 LINE 照片">
+          <View style={s.lineIc}><Text style={s.lineIcText}>LINE</Text></View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.coTitle}>整理 LINE 相簿</Text>
+            <Text style={s.coSub}>下載到手機後，一鍵留下有孩子的照片，其他的確認後刪除。</Text>
+          </View>
+          <Text style={s.coGoText}>›</Text>
+        </Pressable>
 
         {/* 小相簿 */}
         {featured.length ? (
@@ -299,6 +310,9 @@ const useStyles = makeStyles((t: Theme) => {
     doo: { position: 'absolute', top: -18, right: '18%', fontSize: 30, color: t.id === 'starry' ? '#FF9FB0' : '#DCAA9F', transform: [{ rotate: '-14deg' }], fontFamily: t.num.fontFamily },
     faces: { flexDirection: 'row', marginTop: 4 },
     face: { borderWidth: 2.5, borderColor: '#FFFDF8', boxShadow: '0px 2px 4px rgba(0,0,0,0.1)' } as ViewStyle,
+    line: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+    lineIc: { width: 42, height: 42, borderRadius: 12, backgroundColor: '#06C755', alignItems: 'center', justifyContent: 'center' },
+    lineIcText: { color: '#fff', fontSize: 11, fontWeight: '800' },
     coTitle: { ...t.title, fontSize: 16, lineHeight: 23, color: c.calloutTitle },
     coSub: { ...t.round, fontSize: 12, lineHeight: 19, color: c.muted, marginTop: 3 },
     coGo: {

@@ -9,5 +9,6 @@ export async function signOut() {}
 export async function candidateFolders(): Promise<FolderChoice[]> {
   return [{ id: '1', name: '115-1 健康班', where: '與我共用' }, { id: '2', name: '115-1 健康班 活動影片', where: '與我共用' }, { id: '3', name: '家庭照片', where: '我的雲端硬碟' }];
 }
-export function previewUri(id: string): Promise<string> { return Promise.resolve(`${BASE}/demo/${id.startsWith('face_') ? id.slice(5) : id}.jpg`); }
+export function previewUri(id: string): Promise<string> {
+  if (id.startsWith('local:')) return Promise.resolve(`${BASE}/demo/${id.slice(6).split('_')[0]}.jpg`); return Promise.resolve(`${BASE}/demo/${id.startsWith('face_') ? id.slice(5) : id}.jpg`); }
 export function clearScanCache() {}

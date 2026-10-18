@@ -158,6 +158,7 @@ export default function Settings() {
               save({ notify: v });
             }} />
           </Row>
+          <Row icon="album" title="整理 LINE 照片" sub="留下有孩子的照片，其他的確認後刪除" onPress={() => router.push('/clean')}><Text style={s.v}>›</Text></Row>
           <Row icon="list" title="執行紀錄" sub="每次整理找到了什麼" onPress={() => router.push('/logs')}><Text style={s.v}>›</Text></Row>
         </View>
 

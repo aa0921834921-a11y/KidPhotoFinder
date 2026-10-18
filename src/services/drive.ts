@@ -189,6 +189,7 @@ export async function fetchForScan(f: { id: string; name: string; thumb?: string
 /** 畫面顯示用的縮圖（有快取，關掉 App 也保留，直到系統清快取）。 */
 const previewJobs = new Map<string, Promise<string>>();
 export function previewUri(id: string, size = 1024): Promise<string> {
+  if (id.startsWith('local:')) return require('./localClean').localUri(id); // 手機相簿裡的照片
   const key = `${id}_${size}`;
   if (!previewJobs.has(key)) {
     const job = fetchForScan({ id, name: id, kind: 'image' }, size, 'preview');

@@ -11,6 +11,7 @@ import { buildReferences, decide, THRESHOLDS } from '../core/decide';
 import * as DB from './db';
 import * as Drive from './drive';
 import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
+import { copyLocalToAlbum, isLocal } from './localClean';
 import { bump, getState, setState } from './state';
 
 let cancel = false;
@@ -92,6 +93,15 @@ async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i
     onEach?.(i, todo.length);
     const f = await DB.fileById(todo[i]);
     if (!f) continue;
+    if (isLocal(f.id)) { // 手機相簿（LINE 下載）的照片：直接複製一份
+      try {
+        const a = await copyLocalToAlbum(f.id, f.name, alb);
+        if (!alb) alb = await MediaLibrary.Album.create(s.albumName, [a], true);
+        await DB.markSaved(f.id, a.id);
+        n++;
+      } catch (e) { console.warn('save failed', f.name, e); }
+      continue;
+    }
     try {
       const local = await Drive.downloadOriginal(f.id, f.name);
       const asset = await MediaLibrary.Asset.create(local, alb || undefined);

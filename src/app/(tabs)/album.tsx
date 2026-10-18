@@ -53,7 +53,7 @@ export default function Album() {
       <SectionList
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={<View style={{ marginBottom: 16 }}><HeadCard title="寶貝相簿" sub={`共 ${total} 張，也都在手機「照片」App 的「幼稚園照片」相簿裡。`} /></View>}
+        ListHeaderComponent={<View style={{ marginBottom: 16 }}><HeadCard title="寶貝相簿" sub={`共 ${total} 張，也都在手機「照片」App 的「童年拾光」相簿裡。`} /></View>}
         ListEmptyComponent={<Empty title="還沒有照片" body="到首頁按「立即找新照片」開始吧。" />}
         sections={sections}
         keyExtractor={(row) => row[0].file_id}

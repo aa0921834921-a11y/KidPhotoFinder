@@ -19,7 +19,7 @@ export async function runScan() {
     await wait(110);
   }
   setState({ phase: 'decide', message: '比對寶貝的參考照片…' }); await wait(1200);
-  setState({ phase: 'save', message: '存進「幼稚園照片」相簿' }); await wait(1200);
+  setState({ phase: 'save', message: '存進「童年拾光」相簿' }); await wait(1200);
   const n = ran ? 0 : 3;
   if (n) DB.addSaved(['p00', 'p02', 'p09'].slice(0, n));
   ran = true;
