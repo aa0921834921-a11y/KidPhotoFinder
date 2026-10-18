@@ -12,6 +12,10 @@
 翻頁故事書換分頁時會真的翻頁，在頁面上左右滑也可以翻。
 主題的顏色在 `src/ui/theme.ts`，裝飾插畫在 `src/ui/art.tsx`。
 
+**網頁體驗版**：推上 GitHub 後也會自動做成網頁（GitHub Pages），iPhone、Android 用瀏覽器打開
+`https://你的帳號.github.io/KidPhotoFinderApp/` 就能操作整個 App（用示範照片，不會登入、不會存照片）。
+第一次要到 repo 的 Settings → Pages，把 Source 選成「GitHub Actions」。免費帳號的 repo 要設成 Public 才能用 Pages。
+
 ---
 
 ## Android：用 GitHub 自動打包

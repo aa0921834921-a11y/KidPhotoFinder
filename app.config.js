@@ -47,7 +47,9 @@ module.exports = {
       './plugins/withOrtAndroid',
       './plugins/withAndroidRelease',
     ],
-    experiments: { typedRoutes: false },
+    web: { bundler: 'metro', output: 'single', name: '幼稚園照片小幫手（體驗版）' },
+    // 網頁體驗版放在 GitHub Pages 的子路徑（例如 /KidPhotoFinderApp）
+    experiments: { typedRoutes: false, ...(process.env.EXPO_PUBLIC_BASE_URL ? { baseUrl: process.env.EXPO_PUBLIC_BASE_URL } : {}) },
     extra: { iosClientId: g.iosClientId, webClientId: g.webClientId },
   },
 };
