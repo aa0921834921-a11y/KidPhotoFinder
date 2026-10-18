@@ -1,0 +1,128 @@
+# 每次推上 main（或在 Actions 頁面按「Run workflow」），GitHub 會自動打包 Android 安裝檔（APK），
+# 放到這個 repo 的「Releases」，手機打開下載就能安裝。
+name: 打包 Android APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'LICENSE']
+  workflow_dispatch:
+
+permissions:
+  contents: write # 建立 Release 用
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KPF_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: 安裝套件
+        run: npm ci
+
+      - name: 檢查程式
+        run: npx tsc --noEmit
+
+      - name: 產生 Android 專案
+        run: npx expo prebuild -p android --clean --no-install
+
+      - name: 準備簽章（有設定 Secrets 才用自己的，沒有就用預設簽章）
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "KPF_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "使用自己的簽章"
+          else
+            echo "沒有設定 ANDROID_KEYSTORE_BASE64，使用預設簽章"
+          fi
+
+      - name: 打包 APK
+        working-directory: android
+        env:
+          KPF_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KPF_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KPF_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: 打包上架用的 AAB（Google Play）
+        if: env.KPF_KEYSTORE != ''
+        working-directory: android
+        env:
+          KPF_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KPF_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KPF_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: 整理 APK、讀出簽章指紋（SHA-1）
+        id: apk
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          NAME="KidPhotoFinder-1.0.${KPF_BUILD_NUMBER}.apk"
+          mkdir -p out && cp "$APK" "out/$NAME"
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          if [ -f "$AAB" ]; then cp "$AAB" "out/KidPhotoFinder-1.0.${KPF_BUILD_NUMBER}.aab"; fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" > certs.txt
+          fmt() { grep -m1 "$1 digest" certs.txt | awk '{print $NF}' | tr a-f A-F | sed 's/../&:/g; s/:$//'; }
+          SHA1=$(fmt SHA-1); SHA256=$(fmt SHA-256)
+          SIZE=$(du -m "out/$NAME" | cut -f1)
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          if grep -q '請貼上' google-config.json; then
+            WARN="> 提醒：google-config.json 還有範例文字沒換掉。Android 只要在 Google Cloud 建好「Android 用戶端」就能登入；網頁用戶端 ID 建議也填上。"
+          else
+            WARN=""
+          fi
+          cat > release.md <<EOF
+          ## 幼稚園照片小幫手 Android 版 1.0.${KPF_BUILD_NUMBER}
+
+          **安裝**：用 Android 手機打開這一頁，點下面的 \`$NAME\`（約 ${SIZE} MB）下載，再點下載好的檔案安裝。
+          第一次安裝會問「是否允許安裝不明來源的應用程式」，請允許瀏覽器安裝。
+          之後有新版本，一樣下載安裝就會直接覆蓋更新，資料會保留。
+
+          **簽章指紋**（Google Cloud 建立「Android 用戶端」時要填的 SHA-1）：
+          \`\`\`
+          $SHA1
+          \`\`\`
+
+          $WARN
+          EOF
+          cat release.md >> "$GITHUB_STEP_SUMMARY"
+          echo "SHA-256: $SHA256" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上傳到 Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-${{ github.run_number }}
+          name: Android 版 1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          body_path: release.md
+          files: out/*
+          make_latest: true
+
+      - name: 也存一份在 Actions（保留 30 天）
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: out/*
+          retention-days: 30
