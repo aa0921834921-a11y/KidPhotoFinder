@@ -25,11 +25,11 @@ module.exports = {
       },
     },
     android: {
-      blockedPermissions: ['android.permission.READ_MEDIA_VIDEO'],
       package: 'tw.kidphotofinder.app',
       versionCode: build,
-      adaptiveIcon: { foregroundImage: './assets/android-icon-foreground.png', backgroundColor: '#F7EFE0' },
+      adaptiveIcon: { foregroundImage: './assets/android-icon-foreground.png', backgroundImage: './assets/android-icon-background.png', monochromeImage: './assets/android-icon-monochrome.png', backgroundColor: '#F7EFE0' },
       permissions: ['POST_NOTIFICATIONS', 'READ_MEDIA_IMAGES'],
+      blockedPermissions: ['android.permission.READ_MEDIA_VIDEO'],
     },
     plugins: [
       'expo-router',
