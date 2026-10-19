@@ -183,6 +183,7 @@ export type ScanResult = { scanned: number; saved: number; review: number; error
  * budgetMs：背景執行時系統給的時間有限，時間快到就先收尾，下次接著做。
  */
 const LIST_KEY = 'last_list'; // 上次完整看完老師資料夾：「資料夾ID|時間(ms)」
+const LIST_RESUME = 'list_resume'; // 看資料夾看到一半的進度
 
 /**
  * 多久之內看過資料夾就不用再看一次（資料夾有幾千個檔案時，光是看一遍就要好幾分鐘）：
@@ -216,11 +217,29 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       setState({ message: `接著上次的進度，還有 ${pending} 張沒看過` });
     } else {
       try {
-        listed = await Drive.listFolder(s.folderId, s.folderName || '老師的資料夾', (n) => {
+        // 看到一半被關掉的話，從上次看到的地方接著看（已經看到的檔案每一批都會先存好）
+        const saved = JSON.parse((await DB.getMeta(LIST_RESUME)) || 'null') as { folderId: string; state: Drive.ListState } | null;
+        const resume = saved && saved.folderId === s.folderId ? saved.state : null;
+        if (resume) setState({ message: `接著看老師的資料夾…已經找到 ${resume.count} 個檔案` });
+        const list = (from: Drive.ListState | null) => Drive.listFolder(s.folderId!, s.folderName || '老師的資料夾', (n) => {
           if (cancel) throw new Stopped(); // 資料夾很大時，看資料夾這一步也能停
           if (!getState().stopping) setState({ message: `正在看老師的資料夾…已經找到 ${n} 個檔案` });
+        }, {
+          resume: from,
+          onWave: async (files, state) => {
+            await DB.upsertListed(files.map(({ thumb, ...f }) => f));
+            await DB.setMeta(LIST_RESUME, JSON.stringify({ folderId: s.folderId, state }));
+          },
         });
-        await DB.upsertListed(listed.map(({ thumb, ...f }) => f));
+        try {
+          listed = await list(resume);
+        } catch (e) {
+          // 接著看失敗（例如隔太久，Google 的分頁記號過期了）：從頭看一次
+          if (e instanceof Stopped || e instanceof Drive.NeedSignIn || !resume) throw e;
+          await DB.setMeta(LIST_RESUME, '');
+          listed = await list(null);
+        }
+        await DB.setMeta(LIST_RESUME, '');
         await DB.setMeta(LIST_KEY, `${s.folderId}|${Date.now()}`);
       } catch (e) {
         if (!(e instanceof Stopped)) throw e;
@@ -228,7 +247,10 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
     }
     const thumbs = new Map(listed.map((f) => [f.id, f.thumb]));
     const todo = cancel ? [] : await DB.filesToScan(s.videos);
-    setState({ phase: 'scan', total: todo.length, message: todo.length ? '正在找臉' : '沒有新照片' });
+    // 畫面顯示整體進度（之前看過的也算進去），App 重開後數字會接著跑
+    const before = await DB.scanProgress(s.videos);
+    const base = before.all - todo.length;
+    setState({ phase: 'scan', total: before.all, done: base, found: before.withFaces, message: todo.length ? '正在找臉' : '沒有新照片' });
     let found = 0;
     // 看這一張的同時，先下載下一張（下載和找臉同時進行）
     const prefetch = (j: number) => {
@@ -268,7 +290,7 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       if (i === 0) tFirst = Date.now();
       const left = todo.length - i - 1;
       const eta = i >= 2 && left > 0 ? fmtEta(((Date.now() - tFirst) / i) * left) : '';
-      setState({ done: i + 1, found, eta });
+      setState({ done: base + i + 1, found: before.withFaces + found, eta });
     }
     setState({ phase: 'decide', message: '正在判斷…' });
     const decisions = await judge();

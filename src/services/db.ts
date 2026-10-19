@@ -123,6 +123,16 @@ export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w
   return fresh;
 }
 
+/** 整體進度：老師資料夾裡一共幾張、已經看過幾張、其中幾張有臉（App 重開後畫面接著算，不會從 0 開始） */
+export async function scanProgress(includeVideos: boolean): Promise<{ all: number; done: number; withFaces: number }> {
+  const d = await db();
+  const r = await d.getFirstAsync<{ all: number; done: number; withFaces: number }>(
+    `SELECT COUNT(*) AS "all", SUM(CASE WHEN status != 'new' THEN 1 ELSE 0 END) AS done,
+            SUM(CASE WHEN status = 'done' AND nfaces > 0 THEN 1 ELSE 0 END) AS withFaces
+     FROM files WHERE id NOT LIKE 'local:%' ${includeVideos ? '' : "AND kind = 'image'"}`);
+  return { all: r?.all || 0, done: r?.done || 0, withFaces: r?.withFaces || 0 };
+}
+
 export async function filesToScan(includeVideos: boolean): Promise<FileRow[]> {
   const d = await db();
   return d.getAllAsync<FileRow>(

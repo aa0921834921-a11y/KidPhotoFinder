@@ -151,36 +151,54 @@ export type ListedFile = {
   kind: 'image' | 'video'; thumb: string | null;
 };
 
-/** 列出資料夾（含所有子資料夾）裡的照片和影片。 */
-export async function listFolder(rootId: string, rootName: string, onProgress?: (n: number) => void): Promise<ListedFile[]> {
+/** 看資料夾看到一半的進度（存起來，App 被關掉後可以接著看） */
+export type ListState = { queue: { id: string; path: string; page?: string }[]; seen: string[]; count: number };
+
+/**
+ * 列出資料夾（含所有子資料夾）裡的照片和影片。
+ * 一次同時看 4 個資料夾、每個資料夾一次看一頁（最多 1000 個檔案）；每看完一批就呼叫 onWave，
+ * 讓呼叫的人把這批檔案和目前進度存起來。傳入 resume 就從上次停下的地方接著看。
+ */
+export async function listFolder(rootId: string, rootName: string, onProgress?: (n: number) => void,
+  opts: { resume?: ListState | null; onWave?: (files: ListedFile[], state: ListState) => Promise<void> } = {}): Promise<ListedFile[]> {
   const fields = 'id, name, mimeType, size, modifiedTime, md5Checksum, thumbnailLink, shortcutDetails';
-  const queue: { id: string; path: string }[] = [{ id: rootId, path: rootName }];
-  const seen = new Set<string>([rootId]);
+  const queue: ListState['queue'] = opts.resume ? [...opts.resume.queue] : [{ id: rootId, path: rootName }];
+  const seen = new Set<string>(opts.resume ? opts.resume.seen : [rootId]);
+  let count = opts.resume?.count || 0;
   const out: ListedFile[] = [];
   while (queue.length) {
-    // 一次同時看 4 個資料夾（子資料夾很多時快很多）
     const wave = queue.splice(0, 4);
-    const lists = await Promise.all(wave.map((q) => listAll(`'${q.id}' in parents and trashed = false`, fields)));
+    const pages = await Promise.all(wave.map((q) => api<{ files: DriveFile[]; nextPageToken?: string }>('/files', {
+      q: `'${q.id}' in parents and trashed = false`, fields: `nextPageToken, files(${fields})`, pageSize: '1000',
+      ...(q.page ? { pageToken: q.page } : {}),
+    })));
+    const batch: ListedFile[] = [];
+    const more: ListState['queue'] = [];
     for (let w = 0; w < wave.length; w++) {
-    const { path } = wave[w];
-    for (const it of lists[w]) {
-      const isFolder = it.mimeType === FOLDER || it.shortcutDetails?.targetMimeType === FOLDER;
-      if (isFolder) {
-        const tid = it.mimeType === FOLDER ? it.id : it.shortcutDetails!.targetId;
-        if (!seen.has(tid)) { seen.add(tid); queue.push({ id: tid, path: `${path}/${it.name}` }); }
-        continue;
+      const { id, path } = wave[w];
+      if (pages[w].nextPageToken) more.push({ id, path, page: pages[w].nextPageToken });
+      for (const it of pages[w].files) {
+        const isFolder = it.mimeType === FOLDER || it.shortcutDetails?.targetMimeType === FOLDER;
+        if (isFolder) {
+          const tid = it.mimeType === FOLDER ? it.id : it.shortcutDetails!.targetId;
+          if (!seen.has(tid)) { seen.add(tid); queue.push({ id: tid, path: `${path}/${it.name}` }); }
+          continue;
+        }
+        const image = it.mimeType.startsWith('image/') || IMAGE_EXT.test(it.name);
+        const video = it.mimeType.startsWith('video/') || VIDEO_EXT.test(it.name);
+        if (!image && !video) continue;
+        batch.push({
+          id: it.id, name: it.name, folder: path, mime: it.mimeType, size: Number(it.size || 0),
+          modified: it.modifiedTime || '', md5: it.md5Checksum || null, kind: image ? 'image' : 'video',
+          thumb: it.thumbnailLink || null,
+        });
       }
-      const image = it.mimeType.startsWith('image/') || IMAGE_EXT.test(it.name);
-      const video = it.mimeType.startsWith('video/') || VIDEO_EXT.test(it.name);
-      if (!image && !video) continue;
-      out.push({
-        id: it.id, name: it.name, folder: path, mime: it.mimeType, size: Number(it.size || 0),
-        modified: it.modifiedTime || '', md5: it.md5Checksum || null, kind: image ? 'image' : 'video',
-        thumb: it.thumbnailLink || null,
-      });
     }
-    }
-    onProgress?.(out.length);
+    queue.unshift(...more); // 同一個資料夾還有下一頁的，先接著看完
+    out.push(...batch);
+    count += batch.length;
+    await opts.onWave?.(batch, { queue: [...queue], seen: [...seen], count });
+    onProgress?.(count);
   }
   return out;
 }
