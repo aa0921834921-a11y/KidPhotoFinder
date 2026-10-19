@@ -25,6 +25,7 @@ module.exports = {
       },
     },
     android: {
+      blockedPermissions: ['android.permission.READ_MEDIA_VIDEO'],
       package: 'tw.kidphotofinder.app',
       versionCode: build,
       adaptiveIcon: { foregroundImage: './assets/android-icon-foreground.png', backgroundColor: '#F7EFE0' },
