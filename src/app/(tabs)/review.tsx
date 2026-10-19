@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { THRESHOLDS } from '../../core/decide';
 import * as DB from '../../services/db';
@@ -97,6 +97,7 @@ export default function Review() {
   const s = useStyles();
   const version = useApp((x) => x.version);
   const running = useApp((x) => x.running);
+  const applying = useApp((x) => x.applying);
   const w = useContentWidth(16);
   const [items, setItems] = useState<DB.ReviewItem[]>([]);
   const [thr, setThr] = useState(0.48);
@@ -184,7 +185,16 @@ export default function Review() {
 
         {tab === 'todo' ? (
           !items.length ? (
-            <Empty title="都確認完了 ♡" body={running ? '小幫手正在整理，等等可能會有新的。' : '有新照片時會再請你幫忙。'} />
+            applying ? (
+              // 剛按完儲存：背景正在用你的答案重新判斷，判斷完下一批會自動出現（不要先說「都確認完了」）
+              <View style={[cardStyle(t), { padding: 22, alignItems: 'center', gap: 10 }]}>
+                <ActivityIndicator color={t.c.accent} />
+                <H2 style={{ fontSize: 17, textAlign: 'center' }}>正在用你的答案重新判斷其他照片…</H2>
+                <P muted style={{ fontSize: 13, textAlign: 'center' }}>大約幾秒鐘，完成後下一批需要確認的照片會自動出現在這裡。</P>
+              </View>
+            ) : (
+              <Empty title="都確認完了 ♡" body={running ? '小幫手正在整理，等等可能會有新的。' : '有新照片時會再請你幫忙。'} />
+            )
           ) : (
             <>
               <View style={s.modes}>

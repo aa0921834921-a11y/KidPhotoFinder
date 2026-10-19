@@ -136,21 +136,28 @@ async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i
 }
 
 let applyTimer: ReturnType<typeof setTimeout> | null = null;
+let applyAfterScan = false;
 /** 家長按了「是／不是」：停手 4 秒後重新判斷全部照片。 */
 export function scheduleApply() {
   if (applyTimer) clearTimeout(applyTimer);
+  setState({ applying: true });
   applyTimer = setTimeout(() => { applyTimer = null; applyNow().catch((e) => setState({ lastError: String(e?.message || e) })); }, 4000);
 }
 
 export async function applyNow() {
-  if (getState().running) { scheduleApply(); return; }
+  if (getState().running) {
+    // 正在找新照片：掃描每看 40 張會重新判斷（會用到你的答案）；掃描結束後再補套用一次，確保最後按的也算進去
+    applyAfterScan = true;
+    setState({ applying: false });
+    return;
+  }
   setState({ running: true, phase: 'decide', message: '正在套用你的變更…' });
   try {
     const d = await judge();
     setState({ phase: 'save' });
     await saveMatches(d, (i, n) => setState({ message: `存進相簿 ${i + 1} / ${n}` }));
   } finally {
-    setState({ running: false, phase: 'idle', message: '' });
+    setState({ running: false, phase: 'idle', message: '', applying: !!applyTimer });
     await refreshCounts();
     bump();
   }
@@ -354,5 +361,6 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
     setState({ running: false, stopping: false, phase: 'done', message: '' });
     await refreshCounts();
     bump();
+    if (applyAfterScan) { applyAfterScan = false; scheduleApply(); }
   }
 }
