@@ -50,10 +50,17 @@ export async function restore(): Promise<Account | null> {
 
 export async function signOut() {
   configure();
+  cached = null;
   await GoogleSignin.signOut();
 }
 
-async function token(): Promise<string> {
+// Google 登入套件同一時間只能有一個 getTokens 在跑（同時呼叫會出現「previous promise did not settle」）。
+// 這裡讓同時要 token 的請求共用同一次呼叫，並把拿到的 token 暫存 40 分鐘（Google 的 token 約 1 小時過期）。
+let cached: { value: string; at: number } | null = null;
+let inflight: Promise<string> | null = null;
+const TOKEN_TTL = 40 * 60 * 1000;
+
+async function fetchToken(): Promise<string> {
   configure();
   try {
     return (await GoogleSignin.getTokens()).accessToken;
@@ -64,6 +71,22 @@ async function token(): Promise<string> {
   }
 }
 
+async function token(): Promise<string> {
+  if (cached && Date.now() - cached.at < TOKEN_TTL) return cached.value;
+  if (!inflight) {
+    inflight = fetchToken()
+      .then((value) => { cached = { value, at: Date.now() }; return value; })
+      .finally(() => { inflight = null; });
+  }
+  return inflight;
+}
+
+/** token 被 Google 拒絕（401）時：丟掉暫存，讓下一次重新拿。 */
+async function dropToken(bad: string) {
+  if (cached?.value === bad) cached = null;
+  await GoogleSignin.clearCachedAccessToken(bad).catch(() => {});
+}
+
 export class NeedSignIn extends Error {
   constructor() { super('請重新登入 Google 帳號'); }
 }
@@ -71,9 +94,10 @@ export class NeedSignIn extends Error {
 async function api<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const qs = new URLSearchParams({ supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', ...params });
   for (let attempt = 0; ; attempt++) {
-    const r = await fetch(`${API}${path}?${qs}`, { headers: { Authorization: `Bearer ${await token()}` } });
+    const t = await token();
+    const r = await fetch(`${API}${path}?${qs}`, { headers: { Authorization: `Bearer ${t}` } });
     if (r.ok) return r.json();
-    if (r.status === 401 && attempt === 0) { await GoogleSignin.clearCachedAccessToken((await GoogleSignin.getTokens()).accessToken).catch(() => {}); continue; }
+    if (r.status === 401 && attempt === 0) { await dropToken(t); continue; }
     if ((r.status === 429 || r.status >= 500) && attempt < 4) { await new Promise((ok) => setTimeout(ok, 800 * 2 ** attempt)); continue; }
     if (r.status === 401) throw new NeedSignIn();
     throw new Error(`Google 雲端硬碟回應錯誤（${r.status}）`);
