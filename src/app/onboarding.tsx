@@ -2,23 +2,34 @@ import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { askNotificationPermission, syncSchedule } from '../services/background';
 import * as DB from '../services/db';
-import { signIn, restore, type Account } from '../services/drive';
-import { downloadModel, modelReady, W600K_MB } from '../services/recognizer';
+import { signIn, signOut, restore, type Account } from '../services/drive';
+import { downloadModel, modelReady, W600K_MB, warmUp } from '../services/recognizer';
 import { Logo } from '../ui/art';
-import { art, Bar, Btn, Card, H1, H2, P, Paper } from '../ui/kit';
+import { art, Bar, Btn, Card, H1, H2, Link, P, Paper } from '../ui/kit';
 import { FolderPicker } from '../ui/FolderPicker';
 import { pickAndAddRefs } from '../ui/pickRefs';
+import { removeReference } from '../services/scanner';
 import { useTheme } from '../ui/theme';
 
-function Step({ n, title, done, active, children }: { n: number; title: string; done: boolean; active: boolean; children?: React.ReactNode }) {
+function Step({ n, title, done, active, detail, onChange, changeLabel = '更換', alwaysOpen, children }: {
+  n: number; title: string; done: boolean; active: boolean; detail?: string | null; onChange?: () => void; changeLabel?: string;
+  alwaysOpen?: boolean; // 完成後內容也一直顯示（可以繼續修改）
+  children?: React.ReactNode;
+}) {
   const t = useTheme();
   return (
     <Card pad={16} style={[{ opacity: active || done ? 1 : 0.55 }, done && { backgroundColor: t.c.yesWash }, !active && !done && { boxShadow: 'none' } as any]}>
       <H2 style={{ fontSize: 18 }}>{done ? '✓ ' : `${n}. `}{title}</H2>
-      {active && !done ? <View style={{ marginTop: 10, gap: 10 }}>{children}</View> : null}
+      {done && (detail || onChange) ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 }}>
+          {detail ? <P muted style={{ fontSize: 13.5, flex: 1 }} numberOfLines={2}>{detail}</P> : <View style={{ flex: 1 }} />}
+          {onChange ? <Link title={`${changeLabel} ›`} onPress={onChange} /> : null}
+        </View>
+      ) : null}
+      {(active && !done) || (alwaysOpen && (active || done)) ? <View style={{ marginTop: 10, gap: 10 }}>{children}</View> : null}
     </Card>
   );
 }
@@ -29,11 +40,17 @@ export default function Onboarding() {
   const [prog, setProg] = useState<number | null>(null);
   const [acct, setAcct] = useState<Account | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
-  const [refs, setRefs] = useState(0);
+  const [refList, setRefList] = useState<{ id: string; uri: string; status: string }[]>([]);
+  const refs = refList.filter((x) => x.status !== 'noface').length;
   const [pick, setPick] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
 
-  const reloadRefs = () => DB.listRefs().then((r) => setRefs(r.filter((x) => x.status !== 'noface').length));
+  const reloadRefs = () => DB.listRefs().then((r) => setRefList(r.map(({ id, uri, status }) => ({ id, uri, status }))));
+  const askRemove = (r: { id: string; uri: string }) => Alert.alert('拿掉這張參考照片？', '只會從小幫手移除，手機相簿裡的照片不會被刪。', [
+    { text: '取消', style: 'cancel' },
+    { text: '拿掉', style: 'destructive', onPress: async () => { await removeReference(r.id, r.uri); reloadRefs(); } },
+  ]);
   useEffect(() => {
     restore().then(setAcct);
     DB.getSettings().then((s) => setFolder(s.folderName));
@@ -41,6 +58,8 @@ export default function Onboarding() {
   }, []);
 
   const step = !model ? 1 : !acct ? 2 : !folder ? 3 : refs < 3 ? 4 : 5;
+  // 模型下載好之後就先在背景啟動辨識引擎，挑完參考照片時就不用再等
+  useEffect(() => { if (model) warmUp(); }, [model]);
 
   const getModel = async () => {
     setProg(0);
@@ -71,24 +90,43 @@ export default function Onboarding() {
           {prog != null ? <Bar value={prog} /> : <Btn title="開始下載" onPress={getModel} />}
         </Step>
 
-        <Step n={2} title="登入 Google 帳號" done={!!acct} active={step === 2}>
+        <Step n={2} title="登入 Google 帳號" done={!!acct} active={step === 2} detail={acct?.email} changeLabel="換帳號"
+          onChange={async () => {
+            try { await signOut(); setAcct(null); setAcct(await signIn()); } catch (e: any) { Alert.alert('登入失敗', String(e?.message || e)); }
+          }}>
           <P muted style={{ fontSize: 13 }}>用「收到老師分享連結」的那個帳號。只會讀取，不會改動任何檔案。</P>
           <Btn title="用 Google 登入" onPress={async () => {
             try { setAcct(await signIn()); } catch (e: any) { Alert.alert('登入失敗', String(e?.message || e)); }
           }} />
         </Step>
 
-        <Step n={3} title="選老師分享的資料夾" done={!!folder} active={step === 3}>
+        <Step n={3} title="選老師分享的資料夾" done={!!folder} active={step === 3} detail={folder ? `📁 ${folder}` : null}
+          onChange={() => setPick(true)}>
           <Btn title="選資料夾" onPress={() => setPick(true)} />
         </Step>
 
-        <Step n={4} title="放幾張孩子的照片" done={refs >= 3} active={step === 4}>
-          <P muted style={{ fontSize: 13 }}>從手機相簿挑 5～15 張清楚的臉（目前 {refs} 張）。</P>
-          <Btn busy={busy} title="＋ 挑照片" onPress={async () => {
+        <Step n={4} title="放幾張孩子的照片" done={refs >= 3} active={step === 4} alwaysOpen>
+          <P muted style={{ fontSize: 13 }}>從手機相簿挑 5～15 張清楚的臉（目前 {refs} 張可以用）。{refList.length ? '選錯的話，點一下照片就能拿掉。' : ''}</P>
+          {refList.length ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {refList.map((r) => (
+                <Pressable key={r.id} onPress={() => askRemove(r)} accessibilityRole="button" accessibilityLabel="拿掉這張參考照片">
+                  <Image source={{ uri: r.uri }} contentFit="cover"
+                    style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2.5, borderColor: r.status === 'noface' ? t.c.no : t.c.yes }} />
+                  <View style={{ position: 'absolute', right: -2, top: -2, width: 20, height: 20, borderRadius: 10, backgroundColor: t.c.card, borderWidth: 1, borderColor: t.c.line, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 11, color: t.c.muted, lineHeight: 13 }}>✕</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {refList.some((r) => r.status === 'noface') ? <P style={{ fontSize: 12.5, color: t.c.noDeep }}>紅框的照片找不到臉，建議拿掉換一張。</P> : null}
+          <Btn busy={busy} kind={refs >= 3 ? 'ghost' : 'primary'} title={refList.length ? '＋ 再加幾張' : '＋ 挑照片'} onPress={async () => {
             setBusy(true);
-            try { await pickAndAddRefs(); } catch (e: any) { Alert.alert('沒有加成功', String(e?.message || e)); }
+            try { await pickAndAddRefs(setMsg); } catch (e: any) { Alert.alert('沒有加成功', String(e?.message || e)); }
             finally { setBusy(false); reloadRefs(); }
           }} />
+          {msg ? <P muted style={{ fontSize: 13, textAlign: 'center' }}>{msg}</P> : null}
         </Step>
 
         <Step n={5} title="允許存照片和通知" done={false} active={step === 5}>
