@@ -7,7 +7,21 @@ import { Asset } from 'expo-asset';
 import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { AlphaType, ColorType, Skia } from '@shopify/react-native-skia';
-import { InferenceSession, Tensor } from 'onnxruntime-react-native';
+import type { InferenceSession } from 'onnxruntime-react-native';
+
+// 辨識引擎用到時才載入：萬一原生模組沒裝好，只會在找照片時出錯，不會讓 App 一打開就閃退。
+type Ort = typeof import('onnxruntime-react-native');
+let ortMod: Ort | null = null;
+function ort(): Ort {
+  if (!ortMod) {
+    try {
+      ortMod = require('onnxruntime-react-native') as Ort;
+    } catch (e: any) {
+      throw new Error('辨識引擎載入失敗，請更新 App 後再試。（' + String(e?.message || e) + '）');
+    }
+  }
+  return ortMod;
+}
 import {
   alignFace, detectFaces, embed, rgbaToBGR, type BGRImage, type Face, type YunetOutputs,
 } from '../core/face';
@@ -58,20 +72,20 @@ async function sessions() {
   if (!det) {
     const a = Asset.fromModule(require('../../assets/models/yunet_dyn.onnx'));
     await a.downloadAsync();
-    det = await InferenceSession.create(path(a.localUri || a.uri));
+    det = await ort().InferenceSession.create(path(a.localUri || a.uri));
   }
   if (!rec) {
     if (!modelReady()) throw new Error('辨識模型還沒下載');
-    rec = await InferenceSession.create(path(w600kFile().uri), {
+    rec = await ort().InferenceSession.create(path(w600kFile().uri), {
       executionProviders: ['coreml', 'nnapi', 'cpu'] as any,
-    }).catch(() => InferenceSession.create(path(w600kFile().uri)));
+    }).catch(() => ort().InferenceSession.create(path(w600kFile().uri)));
   }
   return { det: det!, rec: rec! };
 }
 
 const runDet = async (input: Float32Array, h: number, w: number): Promise<YunetOutputs> => {
   const { det } = await sessions();
-  const o = await det.run({ input: new Tensor('float32', input, [1, 3, h, w]) });
+  const o = await det.run({ input: new (ort().Tensor)('float32', input, [1, 3, h, w]) });
   const r: YunetOutputs = {};
   for (const k of Object.keys(o)) r[k] = o[k].data as Float32Array;
   return r;
@@ -79,7 +93,7 @@ const runDet = async (input: Float32Array, h: number, w: number): Promise<YunetO
 
 const runRec = async (x: Float32Array): Promise<Float32Array> => {
   const { rec } = await sessions();
-  const o = await rec.run({ input: new Tensor('float32', x, [1, 3, 112, 112]) });
+  const o = await rec.run({ input: new (ort().Tensor)('float32', x, [1, 3, 112, 112]) });
   return Float32Array.from(o[Object.keys(o)[0]].data as Float32Array);
 };
 
