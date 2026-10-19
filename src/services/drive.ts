@@ -5,6 +5,7 @@
 import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as FG from '../../modules/kpf-foreground';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 const API = 'https://www.googleapis.com/drive/v3';
@@ -98,7 +99,8 @@ async function api<T>(path: string, params: Record<string, string> = {}): Promis
     const r = await fetch(`${API}${path}?${qs}`, { headers: { Authorization: `Bearer ${t}` } });
     if (r.ok) return r.json();
     if (r.status === 401 && attempt === 0) { await dropToken(t); continue; }
-    if ((r.status === 429 || r.status >= 500) && attempt < 4) { await new Promise((ok) => setTimeout(ok, 800 * 2 ** attempt)); continue; }
+    // 背景時 setTimeout 會暫停，改用原生的等待
+    if ((r.status === 429 || r.status >= 500) && attempt < 4) { await FG.sleep(800 * 2 ** attempt); continue; }
     if (r.status === 401) throw new NeedSignIn();
     throw new Error(`Google 雲端硬碟回應錯誤（${r.status}）`);
   }

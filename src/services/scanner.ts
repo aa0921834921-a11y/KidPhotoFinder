@@ -13,6 +13,10 @@ import * as Drive from './drive';
 import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { copyLocalToAlbum, isLocal } from './localClean';
 import { bump, getState, setState } from './state';
+import { AppState } from 'react-native';
+import * as FG from '../../modules/kpf-foreground';
+
+const FG_TITLE = '童年拾光・正在整理照片';
 
 let cancel = false;     // 停止找新照片（目前這張看完就停）
 let hardCancel = false; // 連存相簿也馬上停（系統要收回背景執行時間時）
@@ -199,7 +203,11 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
   // 記下「整理到一半」：App 被關掉的話，下次打開會接著做（已經看過的照片不會重看）
   if (mode === 'manual') await DB.setMeta(PENDING, '1').catch(() => {});
   setState({ running: true, stopping: false, phase: 'list', done: 0, total: 0, found: 0, eta: '', message: '正在看老師的資料夾…', lastError: null });
-  if (mode === 'manual') await activateKeepAwakeAsync('scan').catch(() => {});
+  if (mode === 'manual') {
+    await activateKeepAwakeAsync('scan').catch(() => {});
+    // Android：通知列顯示進度，App 切到背景或螢幕關掉也繼續整理
+    FG.start(FG_TITLE, '正在看老師的資料夾…');
+  }
   let scanned = 0, errors = 0, saved = 0, review = 0;
   try {
     const s = await DB.getSettings();
@@ -224,6 +232,7 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
         const list = (from: Drive.ListState | null) => Drive.listFolder(s.folderId!, s.folderName || '老師的資料夾', (n) => {
           if (cancel) throw new Stopped(); // 資料夾很大時，看資料夾這一步也能停
           if (!getState().stopping) setState({ message: `正在看老師的資料夾…已經找到 ${n} 個檔案` });
+          FG.update(FG_TITLE, `正在看老師的資料夾…已經找到 ${n} 個檔案`);
         }, {
           resume: from,
           onWave: async (files, state) => {
@@ -261,6 +270,7 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       return p;
     };
     let next: Promise<string> | null = prefetch(0);
+    let lastSaveAt = Date.now();
     let tFirst = 0; // 第一張看完的時間（第一張含啟動辨識引擎，不拿來估時間）
     for (let i = 0; i < todo.length; i++) {
       if (cancel || Date.now() - t0 > budgetMs) break;
@@ -288,20 +298,45 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       }
       if (!next) next = prefetch(i + 1);
       if (i === 0) tFirst = Date.now();
+      // 邊找邊收：每看 40 張（而且離上次至少 1 分鐘），就先判斷一次、把確定的照片存進相簿，
+      // 不用等幾千張全部看完才看到成果
+      if ((i + 1) % 40 === 0 && Date.now() - lastSaveAt > 60e3 && i + 1 < todo.length && !cancel) {
+        lastSaveAt = Date.now();
+        try {
+          const d = await judge();
+          saved += await saveMatches(d);
+          await refreshCounts();
+          bump();
+        } catch (e) {
+          if (e instanceof Drive.NeedSignIn) throw e; // 其他錯誤（例如還沒允許存照片）先略過，最後會再存一次
+        }
+      }
       const left = todo.length - i - 1;
-      const eta = i >= 2 && left > 0 ? fmtEta(((Date.now() - tFirst) / i) * left) : '';
+      const eta = i >= 2 && left > 0 ? fmtEta(((Date.now() - tFirst) / 1000 / i) * left) : '';
       setState({ done: base + i + 1, found: before.withFaces + found, eta });
+      FG.update(FG_TITLE, `找臉 ${base + i + 1} / ${before.all}　有臉 ${before.withFaces + found} 張${eta ? `　${eta}` : ''}`, base + i + 1, before.all);
     }
     setState({ phase: 'decide', message: '正在判斷…' });
     const decisions = await judge();
     review = [...decisions.values()].filter((d) => d.kind === 'review').length;
     setState({ phase: 'save', message: '正在把照片存進相簿…' });
-    saved = await saveMatches(decisions, (i, n) => setState({ message: `存進相簿 ${i + 1} / ${n}` }));
+    FG.update(FG_TITLE, '正在判斷、存進相簿…', 0, 0, true);
+    saved += await saveMatches(decisions, (i, n) => {
+      setState({ message: `存進相簿 ${i + 1} / ${n}` });
+      FG.update(FG_TITLE, `存進相簿 ${i + 1} / ${n}`, i + 1, n);
+    });
     const stopped = cancel || Date.now() - t0 > budgetMs;
     await DB.addRun({ started, mode, scanned, matched: [...decisions.values()].filter((d) => d.kind === 'match').length, review, saved, errors, note: stopped ? '中途停止' : '' });
     if (saved > 0 && s.notify) {
       await Notifications.scheduleNotificationAsync({
         content: { title: '有新的照片', body: `找到 ${saved} 張你小孩的新照片，已經存進「${s.albumName}」相簿${review ? `；另外 ${review} 張等你確認` : ''}。` },
+        trigger: null,
+      }).catch(() => {});
+    }
+    else if (mode === 'manual' && s.notify && AppState.currentState !== 'active' && !stopped) {
+      // 在背景整理完了：通知一聲（有存到新照片的話，上面已經通知過了）
+      await Notifications.scheduleNotificationAsync({
+        content: { title: '整理完成', body: review ? `有 ${review} 張照片等你確認。` : `看完了 ${scanned} 張照片，這次沒有新的孩子照片。` },
         trigger: null,
       }).catch(() => {});
     }
@@ -312,6 +347,7 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
     throw e;
   } finally {
     if (mode === 'manual') {
+      FG.stop();
       deactivateKeepAwake('scan');
       await DB.setMeta(PENDING, '').catch(() => {}); // 正常結束、按停止、出錯都算結束；只有 App 被關掉才會留著
     }

@@ -61,9 +61,11 @@ export default function Album() {
         renderSectionHeader={({ section }) => (
           <View style={s.top}>
             <View style={s.gh}>
-              <Text style={s.ghTitle} numberOfLines={1}>{t.id !== 'minimal' ? <Text style={{ color: t.c.accent }}>{t.id === 'starry' ? '✦ ' : '✿ '}</Text> : null}{section.title}</Text>
-              <Text style={s.ghN}>{section.n} 張</Text>
-              {section.sub ? <Text style={s.ghSub} numberOfLines={1}>{section.sub}</Text> : null}
+              <View style={s.ghRow}>
+                <Text style={s.ghTitle}>{t.id !== 'minimal' ? <Text style={{ color: t.c.accent }}>{t.id === 'starry' ? '✦ ' : '✿ '}</Text> : null}{section.title}</Text>
+                <Text style={s.ghN}>{section.n} 張</Text>
+              </View>
+              {section.sub ? <Text style={s.ghSub}>📁 {section.sub}</Text> : null}
             </View>
             <DashLine style={{ marginBottom: 14 }} />
           </View>
@@ -98,10 +100,11 @@ const useStyles = makeStyles((t: Theme) => {
       ...side, borderBottomWidth: t.border, borderBottomLeftRadius: r.borderBottomLeftRadius, borderBottomRightRadius: r.borderBottomRightRadius,
       height: 18, marginBottom: 16, zIndex: 2, boxShadow: t.id === 'candy' ? '0px 5px 0px #F4CDE0' : 'none',
     } as any,
-    gh: { flexDirection: 'row', alignItems: 'baseline', gap: 8, paddingBottom: 10 },
-    ghTitle: { ...t.title, fontSize: 18, color: t.id === 'watercolor' || t.id === 'book' ? '#885B52' : c.groupTitle, flexShrink: 1 },
+    gh: { gap: 4, paddingBottom: 10 },
+    ghRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+    ghTitle: { ...t.title, fontSize: 18, lineHeight: 25, color: t.id === 'watercolor' || t.id === 'book' ? '#885B52' : c.groupTitle, flexShrink: 1 },
     ghN: { ...t.round, fontSize: 12, color: c.muted },
-    ghSub: { ...t.round, marginLeft: 'auto', fontSize: 11.5, color: c.muted, flexShrink: 1, maxWidth: '45%' },
+    ghSub: { ...t.round, fontSize: 12, lineHeight: 17, color: c.muted },
     corner: { position: 'absolute', right: -4, bottom: -2, width: 96, height: 52, transform: [{ scaleX: -1 }], opacity: 0.6 },
   });
 });

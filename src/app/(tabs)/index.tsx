@@ -1,14 +1,15 @@
 import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import * as DB from '../../services/db';
 import { NeedSignIn } from '../../services/drive';
 import { interruptedScan, requestStop, runScan } from '../../services/scanner';
 import { useApp } from '../../services/state';
 import { CoverArt, Logo, Polaroid, Ribbon } from '../../ui/art';
 import { FaceCard } from '../../ui/FaceCard';
-import { art, Bar, Btn, cardStyle, DashLine, H2, Icon, P, Paper, useContentWidth } from '../../ui/kit';
+import { art, Bar, Btn, cardStyle, DashLine, H2, Icon, Link, P, Paper, useContentWidth } from '../../ui/kit';
+import * as FG from '../../../modules/kpf-foreground';
 import { makeStyles, useTheme, type Theme } from '../../ui/theme';
 import { usePreview } from '../../ui/usePreview';
 
@@ -147,7 +148,12 @@ export default function Home() {
             <P muted style={{ marginTop: 8, fontSize: 13 }}>
               {app.stopping ? app.message : app.phase === 'scan' && app.total ? `${app.done} / ${app.total}　有臉的照片 ${app.found} 張　${app.eta}` : app.phase === 'model' ? `${Math.round(app.modelProgress * 100)}%` : app.message}
             </P>
-            <P muted style={{ fontSize: 12 }}>可以切到別的 App，回來會繼續；第一次會比較久。</P>
+            <P muted style={{ fontSize: 12 }}>{Platform.OS === 'android' ? '可以關掉螢幕或切到別的 App，通知列會顯示進度；第一次會比較久，建議接上充電。' : '可以切到別的 App，回來會繼續；第一次會比較久。'}</P>
+            {Platform.OS === 'android' && !FG.batteryUnrestricted() ? (
+              <Link title="整理常常停住？把電池設成「不限制」 ›" onPress={() => Alert.alert('讓整理不會被中斷', '有些手機的省電功能會把背景工作關掉。\n\n等一下會打開童年拾光的設定頁：點「電池」→ 選「不限制」（或關掉「電池最佳化」）。', [
+                { text: '取消', style: 'cancel' }, { text: '打開設定', onPress: () => FG.openAppSettings() },
+              ])} style={{ marginTop: 6, fontSize: 12.5 }} />
+            ) : null}
           </View>
         ) : null}
 

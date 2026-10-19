@@ -1,0 +1,7 @@
+{
+  "name": "kpf-foreground",
+  "version": "1.0.0",
+  "private": true,
+  "description": "童年拾光：整理照片時用 Android 前景服務，讓 App 在背景、關掉螢幕時也能繼續",
+  "main": "index.ts"
+}
