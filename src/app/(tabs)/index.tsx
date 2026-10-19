@@ -1,10 +1,10 @@
 import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import * as DB from '../../services/db';
 import { NeedSignIn } from '../../services/drive';
-import { requestStop, runScan } from '../../services/scanner';
+import { interruptedScan, requestStop, runScan } from '../../services/scanner';
 import { useApp } from '../../services/state';
 import { CoverArt, Logo, Polaroid, Ribbon } from '../../ui/art';
 import { FaceCard } from '../../ui/FaceCard';
@@ -59,15 +59,23 @@ export default function Home() {
 
   const latest = usePreview(recent[0]?.file_id || null, 768);
 
-  const start = async () => {
+  const start = async (resume = false) => {
     try {
-      const r = await runScan('manual');
+      const r = await runScan('manual', Infinity, { resume });
       Alert.alert(r.stopped ? '已經停止' : '完成了', r.saved ? `新存了 ${r.saved} 張照片到相簿${r.review ? `，另外 ${r.review} 張等你確認` : ''}。` : r.review ? `有 ${r.review} 張照片等你確認。` : '沒有新照片。');
     } catch (e: any) {
       if (e instanceof NeedSignIn) Alert.alert('需要重新登入', '請到「設定」重新登入 Google 帳號。');
       else Alert.alert('沒有完成', String(e?.message || e));
     }
   };
+
+  // 上次整理到一半 App 被關掉了：打開時自動接著做（已經看過的照片不會重看）
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current) return;
+    resumed.current = true;
+    interruptedScan().then((yes) => { if (yes) start(true); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 小相簿：最新一張＋另一個活動的一張
   const featured: Recent[] = [];
@@ -118,7 +126,7 @@ export default function Home() {
             {greeting()}！{'\n'}<Text style={{ color: t.c.coverEm }}>陪你找回</Text>{'\n'}孩子的美好時光<Text style={s.heart}> ♡</Text>
           </Text>
           <Text style={s.lead}>從老師分享的照片裡，{'\n'}收藏每一個<Text style={{ color: t.c.accentDeep }}>閃閃發光的成長瞬間。</Text></Text>
-          {app.running ? null : <Btn title="✿ 立即找新照片 ↗" onPress={start} style={{ alignSelf: 'flex-start', marginTop: 16 }} />}
+          {app.running ? null : <Btn title="✿ 立即找新照片 ↗" onPress={() => start()} style={{ alignSelf: 'flex-start', marginTop: 16 }} />}
           <Text style={s.cfoot}>✎ {app.running ? '整理中…' : last ? `上次整理 ${fmtTime(last)}` : '還沒有整理過'}　·　{auto ? '每天會自動整理' : '自動整理已關閉'}</Text>
           <CoverArt uri={latest} width={w} onPhoto={recent[0] ? () => openPhoto(recent[0].file_id) : undefined} />
         </View>
@@ -130,13 +138,14 @@ export default function Home() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <Icon name="camera" color={t.c.accent} />
               <H2 style={{ flex: 1, fontSize: 18 }}>{PHASE[app.phase] || '整理中'}</H2>
-              {app.phase === 'scan' || app.phase === 'list' ? <Btn small kind="ghost" title="停止" onPress={requestStop} /> : null}
+              {app.phase === 'scan' || app.phase === 'list'
+                ? <Btn small kind="ghost" title={app.stopping ? '停止中…' : '停止'} disabled={app.stopping} onPress={() => requestStop()} /> : null}
             </View>
             <View style={{ marginTop: 12 }}>
               <Bar value={app.phase === 'model' ? app.modelProgress : app.total ? app.done / app.total : 0} indeterminate={app.phase !== 'scan' && app.phase !== 'model'} />
             </View>
             <P muted style={{ marginTop: 8, fontSize: 13 }}>
-              {app.phase === 'scan' && app.total ? `${app.done} / ${app.total}　有臉的照片 ${app.found} 張　${app.eta}` : app.phase === 'model' ? `${Math.round(app.modelProgress * 100)}%` : app.message}
+              {app.stopping ? app.message : app.phase === 'scan' && app.total ? `${app.done} / ${app.total}　有臉的照片 ${app.found} 張　${app.eta}` : app.phase === 'model' ? `${Math.round(app.modelProgress * 100)}%` : app.message}
             </P>
             <P muted style={{ fontSize: 12 }}>可以切到別的 App，回來會繼續；第一次會比較久。</P>
           </View>

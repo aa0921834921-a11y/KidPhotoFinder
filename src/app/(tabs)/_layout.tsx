@@ -58,8 +58,10 @@ function Scene({ index, focused, nav, theme, children }: { index: number; focuse
       }
       return;
     }
-    // 又回到這一頁（例如連按兩次）：停掉還在翻的動畫
+    // 又回到這一頁（例如連按兩次）：停掉還在翻的動畫，並把頁面「放回原位」。
+    // Android 用原生動畫時，拿掉樣式不會還原數值（會一直是透明、轉走的），所以一定要明確設回 0。
     lift.stopAnimation();
+    lift.setValue(0);
     setLeaving(0);
     if (!anim) return;
     if (book) {
@@ -74,17 +76,19 @@ function Scene({ index, focused, nav, theme, children }: { index: number; focuse
 
   const visible = focused || leaving !== 0;
   const style: Animated.WithAnimatedValue<ViewStyle>[] = [StyleSheet.absoluteFill, { display: visible ? 'flex' : 'none', zIndex: leaving ? 2 : focused ? 1 : 0 }];
-  if (leaving) {
+  // 動畫用的樣式一直掛著（不要時有時無）：Android 原生動畫在樣式被拿掉後會留著最後的數值，頁面就會一直是空白的。
+  if (book) {
+    const dir = leaving === -1 ? -1 : 1;
     style.push({
-      transformOrigin: leaving === 1 ? 'left center' : 'right center',
+      transformOrigin: dir === 1 ? 'left center' : 'right center',
       opacity: lift.interpolate({ inputRange: [0, 0.78, 1], outputRange: [1, 1, 0] }),
       transform: [
         { perspective: 1700 },
-        { rotateY: lift.interpolate({ inputRange: [0, 1], outputRange: ['0deg', leaving === 1 ? '-104deg' : '104deg'] }) },
+        { rotateY: lift.interpolate({ inputRange: [0, 1], outputRange: ['0deg', dir === 1 ? '-104deg' : '104deg'] }) },
       ],
-      boxShadow: '0px 10px 28px rgba(60,35,22,0.3)',
+      ...(leaving ? { boxShadow: '0px 10px 28px rgba(60,35,22,0.3)' } : null),
     } as any);
-  } else if (!book && focused) {
+  } else {
     style.push({ opacity: fade, transform: [{ translateY: fade.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }] });
   }
 

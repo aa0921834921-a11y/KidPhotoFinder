@@ -23,6 +23,7 @@ export default function Refs() {
   const w = useContentWidth(16);
   const [refs, setRefs] = useState<Ref[]>([]);
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
   useFocusEffect(useCallback(() => { DB.listRefs().then(setRefs); }, [version]));
   const cols = w > 560 ? 5 : 3;
   const gap = 12;
@@ -36,7 +37,7 @@ export default function Refs() {
 
   const add = async () => {
     setBusy(true);
-    try { if (await pickAndAddRefs()) scheduleApply(); } catch (e: any) { Alert.alert('沒有加成功', String(e?.message || e)); }
+    try { if (await pickAndAddRefs(setMsg)) scheduleApply(); } catch (e: any) { Alert.alert('沒有加成功', String(e?.message || e)); }
     finally { setBusy(false); setRefs(await DB.listRefs()); }
   };
   const del = (r: Ref) => Alert.alert('刪除這張參考照片？', '只會從小幫手移除，不會刪掉手機相簿裡的照片。', [
@@ -81,6 +82,7 @@ export default function Refs() {
               <Text style={s.refLabel}>從手機相簿挑</Text>
             </Pressable>
           </View>
+          {msg ? <P muted style={{ fontSize: 13, textAlign: 'center', marginTop: 8 }}>{msg}</P> : null}
           {t.art === 'watercolor' ? <View pointerEvents="none" style={s.corner}><Image source={art.blooms} style={{ flex: 1 }} contentFit="contain" /></View> : null}
         </View>
         {refs.length ? <P muted style={{ fontSize: 12, textAlign: 'center' }}>長按照片可以刪除（只會從小幫手移除）。</P> : null}
