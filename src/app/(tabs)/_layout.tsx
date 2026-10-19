@@ -240,10 +240,14 @@ export default function TabsLayout() {
 
   // theme 放進 render 的依賴：換主題時每一頁會重新排版
   const render = useCallback((descriptor: TabsDescriptor, o: TabsSlotRenderOptions) => {
-    if (o.isFocused && nav.current.cur !== o.index) nav.current = { prev: nav.current.cur, cur: o.index };
+    // 用「書籤上的順序」當頁碼。o.index 是路由內部的順序（不一定跟書籤一樣），用它翻頁方向會錯
+    const name = descriptor.route.name.replace(/\/index$/, '');
+    const at = TABS.findIndex((t) => t.name === name);
+    const index = at >= 0 ? at : o.index;
+    if (o.isFocused && nav.current.cur !== index) nav.current = { prev: nav.current.cur, cur: index };
     if (!o.loaded && !o.isFocused) return null;
     return (
-      <Scene key={descriptor.route.key} index={o.index} focused={o.isFocused} nav={nav} theme={theme}>
+      <Scene key={descriptor.route.key} index={index} focused={o.isFocused} nav={nav} theme={theme}>
         {descriptor.render()}
       </Scene>
     );
