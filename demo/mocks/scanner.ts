@@ -3,7 +3,8 @@ import { Alert } from 'react-native';
 import { setState } from '../../src/services/state';
 import * as DB from './db';
 let stop = false;
-export const requestStop = () => { stop = true; setState({ message: '正在停止…' }); };
+export const requestStop = (_hard = false) => { if (stop) return; stop = true; setState({ stopping: true, message: '停止中…目前這張看完就停，找到的照片會先存好' }); };
+export async function interruptedScan() { return false; }
 export async function refreshCounts() { setState({ counts: await DB.counts() }); }
 export function scheduleApply() { refreshCounts(); }
 export async function removeReference(id: string) { await DB.deleteRef(id); }
@@ -12,7 +13,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let ran = false;
 export async function runScan() {
   stop = false;
-  setState({ running: true, phase: 'list', done: 0, total: 0, found: 0, message: '老師的資料夾裡有 1,284 個檔案，新的有 48 張' });
+  setState({ stopping: false, running: true, phase: 'list', done: 0, total: 0, found: 0, message: '老師的資料夾裡有 1,284 個檔案，新的有 48 張' });
   await wait(1500);
   for (let i = 0; i <= 48 && !stop; i += 2) {
     setState({ phase: 'scan', done: i, total: 48, found: Math.floor(i * 0.35), eta: `約 ${Math.ceil((48 - i) / 10)} 秒` });
@@ -23,7 +24,7 @@ export async function runScan() {
   const n = ran ? 0 : 3;
   if (n) DB.addSaved(['p00', 'p02', 'p09'].slice(0, n));
   ran = true;
-  setState({ running: false, phase: 'idle' });
+  setState({ running: false, stopping: false, phase: 'idle' });
   await refreshCounts();
   setState({ version: Math.random() * 1e9 | 0 });
   if (!n) Alert.alert('體驗版', '示範照片都找過了。');
