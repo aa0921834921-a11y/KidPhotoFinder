@@ -14,8 +14,23 @@ import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { copyLocalToAlbum, isLocal } from './localClean';
 import { bump, getState, setState } from './state';
 
-let cancel = false;
-export const requestStop = () => { cancel = true; setState({ message: '正在停止，會先把找到的照片存好…' }); };
+let cancel = false;     // 停止找新照片（目前這張看完就停）
+let hardCancel = false; // 連存相簿也馬上停（系統要收回背景執行時間時）
+class Stopped extends Error {}
+/** 按「停止」。找到的照片還是會先存好；hard = 連存照片也停（背景時間到）。 */
+export const requestStop = (hard = false) => {
+  if (hard) hardCancel = true;
+  if (cancel) return;
+  cancel = true;
+  setState({ stopping: true, message: '停止中…目前這張看完就停，找到的照片會先存好' });
+};
+
+const PENDING = 'scan_pending';
+/** 上次在 App 裡按的整理，是不是因為 App 被關掉而沒做完 */
+export async function interruptedScan(): Promise<boolean> {
+  if (getState().running) return false;
+  return (await DB.getMeta(PENDING).catch(() => null)) === '1';
+}
 
 export async function refreshCounts() {
   setState({ counts: await DB.counts() });
@@ -89,7 +104,7 @@ async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i
   let alb = await album(s.albumName);
   let n = 0;
   for (let i = 0; i < todo.length; i++) {
-    if (cancel) break;
+    if (hardCancel) break;
     onEach?.(i, todo.length);
     const f = await DB.fileById(todo[i]);
     if (!f) continue;
@@ -167,11 +182,22 @@ export type ScanResult = { scanned: number; saved: number; review: number; error
  * mode: manual（在 App 裡按開始）/ background（系統排程）
  * budgetMs：背景執行時系統給的時間有限，時間快到就先收尾，下次接著做。
  */
-export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity): Promise<ScanResult> {
+const LIST_KEY = 'last_list'; // 上次完整看完老師資料夾：「資料夾ID|時間(ms)」
+
+/**
+ * 多久之內看過資料夾就不用再看一次（資料夾有幾千個檔案時，光是看一遍就要好幾分鐘）：
+ * 接著上次被關掉的整理 → 24 小時；在 App 裡再按一次 → 15 分鐘；背景自動 → 1 小時。
+ */
+const LIST_FRESH_MS = { resume: 24 * 3600e3, manual: 15 * 60e3, background: 3600e3 };
+
+export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity, opts: { resume?: boolean } = {}): Promise<ScanResult> {
   if (getState().running) return { scanned: 0, saved: 0, review: 0, errors: 0, stopped: true };
   const started = DB.now(), t0 = Date.now();
   cancel = false;
-  setState({ running: true, phase: 'list', done: 0, total: 0, found: 0, eta: '', message: '正在看老師的資料夾…', lastError: null });
+  hardCancel = false;
+  // 記下「整理到一半」：App 被關掉的話，下次打開會接著做（已經看過的照片不會重看）
+  if (mode === 'manual') await DB.setMeta(PENDING, '1').catch(() => {});
+  setState({ running: true, stopping: false, phase: 'list', done: 0, total: 0, found: 0, eta: '', message: '正在看老師的資料夾…', lastError: null });
   if (mode === 'manual') await activateKeepAwakeAsync('scan').catch(() => {});
   let scanned = 0, errors = 0, saved = 0, review = 0;
   try {
@@ -181,21 +207,51 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       setState({ phase: 'model', message: '正在下載辨識模型…' });
       await downloadModel((p) => setState({ modelProgress: p }));
     }
-    const listed = await Drive.listFolder(s.folderId, s.folderName || '老師的資料夾', (n) => setState({ message: `正在看老師的資料夾…已經找到 ${n} 個檔案` }));
-    await DB.upsertListed(listed.map(({ thumb, ...f }) => f));
+    let listed: Awaited<ReturnType<typeof Drive.listFolder>> = [];
+    const [lastFolder, lastAt] = ((await DB.getMeta(LIST_KEY)) || '|0').split('|');
+    const freshMs = opts.resume ? LIST_FRESH_MS.resume : LIST_FRESH_MS[mode];
+    const pending = (await DB.filesToScan(s.videos)).length;
+    const skipList = lastFolder === s.folderId && Date.now() - Number(lastAt) < freshMs && pending > 0;
+    if (skipList) {
+      setState({ message: `接著上次的進度，還有 ${pending} 張沒看過` });
+    } else {
+      try {
+        listed = await Drive.listFolder(s.folderId, s.folderName || '老師的資料夾', (n) => {
+          if (cancel) throw new Stopped(); // 資料夾很大時，看資料夾這一步也能停
+          if (!getState().stopping) setState({ message: `正在看老師的資料夾…已經找到 ${n} 個檔案` });
+        });
+        await DB.upsertListed(listed.map(({ thumb, ...f }) => f));
+        await DB.setMeta(LIST_KEY, `${s.folderId}|${Date.now()}`);
+      } catch (e) {
+        if (!(e instanceof Stopped)) throw e;
+      }
+    }
     const thumbs = new Map(listed.map((f) => [f.id, f.thumb]));
-    const todo = await DB.filesToScan(s.videos);
+    const todo = cancel ? [] : await DB.filesToScan(s.videos);
     setState({ phase: 'scan', total: todo.length, message: todo.length ? '正在找臉' : '沒有新照片' });
     let found = 0;
+    // 看這一張的同時，先下載下一張（下載和找臉同時進行）
+    const prefetch = (j: number) => {
+      const g = todo[j];
+      if (!g || g.kind !== 'image' || cancel) return null;
+      const p = Drive.fetchForScan({ id: g.id, name: g.name, thumb: thumbs.get(g.id), kind: g.kind });
+      p.catch(() => {});
+      return p;
+    };
+    let next: Promise<string> | null = prefetch(0);
+    let tFirst = 0; // 第一張看完的時間（第一張含啟動辨識引擎，不拿來估時間）
     for (let i = 0; i < todo.length; i++) {
       if (cancel || Date.now() - t0 > budgetMs) break;
       const f = todo[i];
+      const mine = next;
+      next = null;
       try {
         if (f.kind === 'video') {
           const v = await videoFaces(f.id, f.name);
           await DB.saveScan(f.id, v.out, v.w, v.h);
         } else {
-          const uri = await Drive.fetchForScan({ id: f.id, name: f.name, thumb: thumbs.get(f.id), kind: f.kind });
+          const uri = await (mine ?? Drive.fetchForScan({ id: f.id, name: f.name, thumb: thumbs.get(f.id), kind: f.kind }));
+          next = prefetch(i + 1);
           const img = await loadImage(uri, 2048);
           const faces = await analyze(img);
           await DB.saveScan(f.id, faces.map((x) => ({ frame: -1, box: x.box, emb: x.emb })), img.w, img.h);
@@ -208,8 +264,11 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
         errors++;
         await DB.markBad(f.id);
       }
-      const el = (Date.now() - t0) / 1000, per = el / (i + 1);
-      setState({ done: i + 1, found, eta: fmtEta(per * (todo.length - i - 1)) });
+      if (!next) next = prefetch(i + 1);
+      if (i === 0) tFirst = Date.now();
+      const left = todo.length - i - 1;
+      const eta = i >= 2 && left > 0 ? fmtEta(((Date.now() - tFirst) / i) * left) : '';
+      setState({ done: i + 1, found, eta });
     }
     setState({ phase: 'decide', message: '正在判斷…' });
     const decisions = await judge();
@@ -230,8 +289,11 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
     setState({ lastError: String(e?.message || e) });
     throw e;
   } finally {
-    if (mode === 'manual') deactivateKeepAwake('scan');
-    setState({ running: false, phase: 'done', message: '' });
+    if (mode === 'manual') {
+      deactivateKeepAwake('scan');
+      await DB.setMeta(PENDING, '').catch(() => {}); // 正常結束、按停止、出錯都算結束；只有 App 被關掉才會留著
+    }
+    setState({ running: false, stopping: false, phase: 'done', message: '' });
     await refreshCounts();
     bump();
   }

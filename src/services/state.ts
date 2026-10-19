@@ -5,6 +5,7 @@ export type Phase = 'idle' | 'model' | 'list' | 'scan' | 'decide' | 'save' | 'do
 
 export type AppState = {
   running: boolean;
+  stopping: boolean; // 按了停止、正在收尾
   phase: Phase;
   done: number;
   total: number;
@@ -18,7 +19,7 @@ export type AppState = {
 };
 
 let state: AppState = {
-  running: false, phase: 'idle', done: 0, total: 0, found: 0, eta: '', message: '', modelProgress: 0,
+  running: false, stopping: false, phase: 'idle', done: 0, total: 0, found: 0, eta: '', message: '', modelProgress: 0,
   counts: { match: 0, review: 0, saved: 0, files: 0, pending: 0, savedToday: 0 }, lastError: null, version: 0,
 };
 const listeners = new Set<() => void>();

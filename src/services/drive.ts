@@ -158,9 +158,12 @@ export async function listFolder(rootId: string, rootName: string, onProgress?: 
   const seen = new Set<string>([rootId]);
   const out: ListedFile[] = [];
   while (queue.length) {
-    const { id, path } = queue.shift()!;
-    const items = await listAll(`'${id}' in parents and trashed = false`, fields);
-    for (const it of items) {
+    // 一次同時看 4 個資料夾（子資料夾很多時快很多）
+    const wave = queue.splice(0, 4);
+    const lists = await Promise.all(wave.map((q) => listAll(`'${q.id}' in parents and trashed = false`, fields)));
+    for (let w = 0; w < wave.length; w++) {
+    const { path } = wave[w];
+    for (const it of lists[w]) {
       const isFolder = it.mimeType === FOLDER || it.shortcutDetails?.targetMimeType === FOLDER;
       if (isFolder) {
         const tid = it.mimeType === FOLDER ? it.id : it.shortcutDetails!.targetId;
@@ -175,6 +178,7 @@ export async function listFolder(rootId: string, rootName: string, onProgress?: 
         modified: it.modifiedTime || '', md5: it.md5Checksum || null, kind: image ? 'image' : 'video',
         thumb: it.thumbnailLink || null,
       });
+    }
     }
     onProgress?.(out.length);
   }

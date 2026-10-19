@@ -12,7 +12,7 @@ import { requestStop, runScan } from './scanner';
 export const DAILY_TASK = 'kidphoto-daily-scan';
 
 TaskManager.defineTask(DAILY_TASK, async () => {
-  const sub = BackgroundTask.addExpirationListener(() => requestStop());
+  const sub = BackgroundTask.addExpirationListener(() => requestStop(true));
   try {
     const s = await getSettings();
     if (!s.autoDaily || !s.folderId || !s.onboarded) return BackgroundTask.BackgroundTaskResult.Success;

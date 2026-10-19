@@ -7,6 +7,7 @@ import { Asset } from 'expo-asset';
 import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { AlphaType, ColorType, Skia } from '@shopify/react-native-skia';
+import { Platform } from 'react-native';
 import type { InferenceSession } from 'onnxruntime-react-native';
 
 // 辨識引擎用到時才載入：萬一原生模組沒裝好，只會在找照片時出錯，不會讓 App 一打開就閃退。
@@ -68,7 +69,9 @@ export async function downloadModel(progress?: (p: number) => void, signal?: Abo
 let det: InferenceSession | null = null;
 let rec: InferenceSession | null = null;
 
-async function sessions() {
+let loading: Promise<{ det: InferenceSession; rec: InferenceSession }> | null = null;
+
+async function load() {
   if (!det) {
     const a = Asset.fromModule(require('../../assets/models/yunet_dyn.onnx'));
     await a.downloadAsync();
@@ -76,11 +79,29 @@ async function sessions() {
   }
   if (!rec) {
     if (!modelReady()) throw new Error('辨識模型還沒下載');
+    // Android 只用 CPU：NNAPI 在很多中低階手機上第一次要先「編譯」模型，反而慢很多（Android 15 起也已停用）
+    const providers = Platform.OS === 'ios' ? ['coreml', 'cpu'] : ['cpu'];
     rec = await ort().InferenceSession.create(path(w600kFile().uri), {
-      executionProviders: ['coreml', 'nnapi', 'cpu'] as any,
+      executionProviders: providers as any,
     }).catch(() => ort().InferenceSession.create(path(w600kFile().uri)));
   }
   return { det: det!, rec: rec! };
+}
+
+/** 同一時間只會載入一次（找臉和認臉同時要用時共用同一次載入） */
+function sessions() {
+  if (det && rec) return Promise.resolve({ det, rec });
+  if (!loading) loading = load().finally(() => { loading = null; });
+  return loading;
+}
+
+/** 辨識引擎是不是已經載入記憶體（第一次載入在較舊的手機上可能要幾十秒） */
+export const engineReady = () => !!(det && rec);
+
+/** 先在背景把辨識引擎載入，等一下用的時候就不用等。失敗不要緊，真的要用時會再試。 */
+export function warmUp(): Promise<void> {
+  if (!modelReady()) return Promise.resolve();
+  return sessions().then(() => {}, () => {});
 }
 
 const runDet = async (input: Float32Array, h: number, w: number): Promise<YunetOutputs> => {
