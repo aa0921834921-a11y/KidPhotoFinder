@@ -4,7 +4,6 @@
  */
 import { Directory, File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import * as Notifications from 'expo-notifications';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { buildReferences, decide, THRESHOLDS } from '../core/decide';
@@ -13,8 +12,8 @@ import * as DB from './db';
 import * as Drive from './drive';
 import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { copyLocalToAlbum, isLocal } from './localClean';
+import * as Notices from './notices';
 import { bump, getState, setState } from './state';
-import { AppState } from 'react-native';
 import * as FG from '../../modules/kpf-foreground';
 
 const fgTitle = () => tr('scan.fgTitle');
@@ -99,17 +98,20 @@ async function album(name: string): Promise<MediaLibrary.Album | null> {
   return MediaLibrary.Album.get(name);
 }
 
-/** 確定的照片存進相簿（已經存過的不會重存）。只新增，不會刪掉手機裡的任何照片。 */
-async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i: number, n: number) => void): Promise<number> {
+/**
+ * 確定的照片存進相簿（已經存過的不會重存）。只新增，不會刪掉手機裡的任何照片。
+ * 回傳這次存好的照片；deadline 之後就先停（剩下的下次再存）。
+ */
+async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i: number, n: number) => void, deadline = Infinity): Promise<string[]> {
   const s = await DB.getSettings();
   const perm = await MediaLibrary.requestPermissionsAsync(true);
   if (!perm.granted) throw new Error(tr('err.needSavePerm'));
   const saved = await DB.savedMap();
   const todo = [...decisions].filter(([k, d]) => d.kind === 'match' && !saved.has(k)).map(([k]) => k);
   let alb = await album(s.albumName);
-  let n = 0;
+  const done: string[] = [];
   for (let i = 0; i < todo.length; i++) {
-    if (hardCancel) break;
+    if (hardCancel || Date.now() > deadline) break;
     onEach?.(i, todo.length);
     const f = await DB.fileById(todo[i]);
     if (!f) continue;
@@ -118,7 +120,7 @@ async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i
         const a = await copyLocalToAlbum(f.id, f.name, alb);
         if (!alb) alb = await MediaLibrary.Album.create(s.albumName, [a], true);
         await DB.markSaved(f.id, a.id);
-        n++;
+        done.push(f.id);
       } catch (e) { console.warn('save failed', f.name, e); }
       continue;
     }
@@ -128,12 +130,12 @@ async function saveMatches(decisions: Map<string, { kind: string }>, onEach?: (i
       if (!alb) alb = await MediaLibrary.Album.create(s.albumName, [asset], true);
       await DB.markSaved(f.id, asset.id);
       try { new File(local).delete(); } catch {}
-      n++;
+      done.push(f.id);
     } catch (e) {
       console.warn('save failed', f.name, e);
     }
   }
-  return n;
+  return done;
 }
 
 let applyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -196,6 +198,49 @@ export type ScanResult = { scanned: number; saved: number; review: number; error
  */
 const LIST_KEY = 'last_list'; // 上次完整看完老師資料夾：「資料夾ID|時間(ms)」
 const LIST_RESUME = 'list_resume'; // 看資料夾看到一半的進度
+const MAP_KEY = 'folder_map'; // 老師資料夾裡的所有子資料夾（快速檢查用）
+const QUICK_KEY = 'quick_at'; // 上次快速檢查：「資料夾ID|時間(ms)」
+/** 自動檢查平常只問「有沒有新檔案」；每天至少完整看一遍（搬進來的照片、改名的資料夾也看得到） */
+const FULL_EVERY_MS = 24 * 3600e3;
+/** 快速檢查多往前看一點，免得剛好錯過 */
+const QUICK_MARGIN_MS = 30 * 60e3;
+
+async function loadMap(folderId: string): Promise<Map<string, string> | null> {
+  try {
+    const v = JSON.parse((await DB.getMeta(MAP_KEY)) || 'null') as { folderId: string; dirs: [string, string][] } | null;
+    return v && v.folderId === folderId && v.dirs?.length ? new Map(v.dirs) : null;
+  } catch {
+    return null;
+  }
+}
+const saveMap = (folderId: string, dirs: Map<string, string>) => DB.setMeta(MAP_KEY, JSON.stringify({ folderId, dirs: [...dirs] }));
+
+/** 「資料夾ID|時間(ms)」→ 時間（不是這個資料夾就是 0） */
+async function stampFor(key: string, folderId: string): Promise<number> {
+  const [f, t] = ((await DB.getMeta(key).catch(() => null)) || '|0').split('|');
+  return f === folderId ? Number(t) || 0 : 0;
+}
+
+/**
+ * 快速檢查（自動檢查用）：只問老師的資料夾「最近有沒有新增或改過的檔案」，幾秒就好。
+ * 有新的子資料夾（新的活動）就把它整個看一遍。
+ */
+async function quickCheck(folderId: string, dirs: Map<string, string>): Promise<Drive.ListedFile[]> {
+  const startedAt = Date.now();
+  const since = Math.max(await stampFor(QUICK_KEY, folderId), await stampFor(LIST_KEY, folderId)) - QUICK_MARGIN_MS;
+  const r = await Drive.listChangedSince(dirs, since);
+  let files = r.files;
+  for (const nd of r.newDirs) {
+    if (cancel) throw new Stopped();
+    const sub = new Map<string, string>();
+    files = files.concat(await Drive.listFolder(nd.id, nd.path, undefined, { dirs: sub }));
+    for (const [id, path] of sub) dirs.set(id, path);
+  }
+  if (files.length) await DB.upsertListed(files.map(({ thumb, ...f }) => f));
+  if (r.newDirs.length) await saveMap(folderId, dirs);
+  await DB.setMeta(QUICK_KEY, `${folderId}|${startedAt}`);
+  return files;
+}
 
 /**
  * 多久之內看過資料夾就不用再看一次（資料夾有幾千個檔案時，光是看一遍就要好幾分鐘）：
@@ -216,7 +261,8 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
     // Android：通知列顯示進度，App 切到背景或螢幕關掉也繼續整理
     FG.start(fgTitle(), tr('scan.listing'));
   }
-  let scanned = 0, errors = 0, saved = 0, review = 0;
+  let scanned = 0, errors = 0, review = 0;
+  const savedIds: string[] = [];
   try {
     const s = await DB.getSettings();
     if (!s.folderId) throw new Error(tr('err.noFolder'));
@@ -224,28 +270,41 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       setState({ phase: 'model', message: tr('scan.downloadingModel') });
       await downloadModel((p) => setState({ modelProgress: p }));
     }
-    let listed: Awaited<ReturnType<typeof Drive.listFolder>> = [];
-    const [lastFolder, lastAt] = ((await DB.getMeta(LIST_KEY)) || '|0').split('|');
+    let listed: Drive.ListedFile[] = [];
+    const folderId = s.folderId;
+    const lastAt = await stampFor(LIST_KEY, folderId);
     const freshMs = opts.resume ? LIST_FRESH_MS.resume : LIST_FRESH_MS[mode];
-    const pending = (await DB.filesToScan(s.videos)).length;
-    const skipList = lastFolder === s.folderId && Date.now() - Number(lastAt) < freshMs && pending > 0;
-    if (skipList) {
+    const pending = await DB.pendingCount(s.videos);
+    // 看到一半被關掉的話，從上次看到的地方接著看（已經看到的檔案每一批都會先存好）
+    const savedResume = JSON.parse((await DB.getMeta(LIST_RESUME)) || 'null') as { folderId: string; state: Drive.ListState } | null;
+    const resume = savedResume && savedResume.folderId === folderId ? savedResume.state : null;
+    // 自動檢查：一天內完整看過資料夾的話，只問「有沒有新檔案」
+    const map = mode === 'background' && !resume && Date.now() - lastAt < FULL_EVERY_MS ? await loadMap(folderId) : null;
+    if (map) {
+      try {
+        listed = await quickCheck(folderId, map);
+      } catch (e) {
+        if (e instanceof Drive.NeedSignIn) throw e;
+        if (!(e instanceof Stopped)) console.warn('quick check failed', e); // 網路不穩之類：這次先整理還沒看的，下次再問
+      }
+    } else if (!resume && Date.now() - lastAt < freshMs && pending > 0) {
       setState({ message: tr('scan.resumePending', { n: pending }) });
     } else {
       try {
-        // 看到一半被關掉的話，從上次看到的地方接著看（已經看到的檔案每一批都會先存好）
-        const saved = JSON.parse((await DB.getMeta(LIST_RESUME)) || 'null') as { folderId: string; state: Drive.ListState } | null;
-        const resume = saved && saved.folderId === s.folderId ? saved.state : null;
         if (resume) setState({ message: tr('scan.resumeListing', { n: resume.count }) });
-        const list = (from: Drive.ListState | null) => Drive.listFolder(s.folderId!, s.folderName || tr('scan.teacherFolder'), (n) => {
-          if (cancel) throw new Stopped(); // 資料夾很大時，看資料夾這一步也能停
+        const dirs = new Map<string, string>();
+        let dirsComplete = !resume || !!resume.dirs; // 舊版存的進度沒有資料夾清單
+        const list = (from: Drive.ListState | null) => Drive.listFolder(folderId, s.folderName || tr('scan.teacherFolder'), (n) => {
+          // 資料夾很大時，看資料夾這一步也能停（背景時間到了也先停，看到哪裡都記著，下次接著看）
+          if (cancel || Date.now() - t0 > budgetMs) throw new Stopped();
           if (!getState().stopping) setState({ message: tr('scan.listingN', { n }) });
           FG.update(fgTitle(), tr('scan.listingN', { n }));
         }, {
           resume: from,
+          dirs,
           onWave: async (files, state) => {
             await DB.upsertListed(files.map(({ thumb, ...f }) => f));
-            await DB.setMeta(LIST_RESUME, JSON.stringify({ folderId: s.folderId, state }));
+            await DB.setMeta(LIST_RESUME, JSON.stringify({ folderId, state }));
           },
         });
         try {
@@ -254,16 +313,26 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
           // 接著看失敗（例如隔太久，Google 的分頁記號過期了）：從頭看一次
           if (e instanceof Stopped || e instanceof Drive.NeedSignIn || !resume) throw e;
           await DB.setMeta(LIST_RESUME, '');
+          dirs.clear();
+          dirsComplete = true;
           listed = await list(null);
         }
         await DB.setMeta(LIST_RESUME, '');
-        await DB.setMeta(LIST_KEY, `${s.folderId}|${Date.now()}`);
+        await DB.setMeta(LIST_KEY, `${folderId}|${Date.now()}`);
+        if (dirsComplete) await saveMap(folderId, dirs);
+        // 第一次完整看完這個資料夾：之後才出現的檔案，就是老師新上傳的
+        if (!(await DB.getBaseline(folderId))) await DB.setBaseline(folderId, DB.now());
       } catch (e) {
         if (!(e instanceof Stopped)) throw e;
       }
     }
     const thumbs = new Map(listed.map((f) => [f.id, f.thumb]));
-    const todo = cancel ? [] : await DB.filesToScan(s.videos);
+    // 老師剛上傳的照片先看（以前的照片還沒看完也一樣）
+    const baseline = await DB.getBaseline(folderId);
+    const todo = cancel ? [] : await DB.filesToScan(s.videos, baseline);
+    // 老師剛上傳的有幾張（排在最前面）
+    const freshCount = baseline ? todo.filter((f) => f.first_seen && f.first_seen > baseline).length : 0;
+    let notified = 0; // savedIds 裡前面幾張已經通知過了
     // 畫面顯示整體進度（之前看過的也算進去），App 重開後數字會接著跑
     const before = await DB.scanProgress(s.videos);
     const base = before.all - todo.length;
@@ -312,11 +381,25 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
         lastSaveAt = Date.now();
         try {
           const d = await judge();
-          saved += await saveMatches(d);
+          savedIds.push(...await saveMatches(d));
           await refreshCounts();
           bump();
         } catch (e) {
           if (e instanceof Drive.NeedSignIn) throw e; // 其他錯誤（例如還沒允許存照片）先略過，最後會再存一次
+        }
+      }
+      // 自動檢查：老師剛上傳的照片看完了，先存好、通知家長，再繼續整理以前的照片
+      if (mode === 'background' && freshCount > 0 && i + 1 === freshCount && i + 1 < todo.length && !cancel) {
+        lastSaveAt = Date.now();
+        try {
+          const d = await judge();
+          savedIds.push(...await saveMatches(d));
+          const pendingReview = [...d.values()].filter((x) => x.kind === 'review').length;
+          await Notices.afterBackground(savedIds.slice(notified), { pendingLeft: todo.length - i - 1, review: pendingReview })
+            .catch((e) => console.warn('notice failed', e));
+          notified = savedIds.length;
+        } catch (e) {
+          if (e instanceof Drive.NeedSignIn) throw e;
         }
       }
       const left = todo.length - i - 1;
@@ -324,30 +407,33 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       setState({ done: base + i + 1, found: before.withFaces + found, eta });
       FG.update(fgTitle(), tr('scan.fgProgress', { done: base + i + 1, total: before.all, found: before.withFaces + found, eta }), base + i + 1, before.all);
     }
-    setState({ phase: 'decide', message: tr('scan.deciding') });
-    const decisions = await judge();
-    review = [...decisions.values()].filter((d) => d.kind === 'review').length;
-    setState({ phase: 'save', message: tr('scan.saving') });
-    FG.update(fgTitle(), tr('scan.fgSaving'), 0, 0, true);
-    saved += await saveMatches(decisions, (i, n) => {
-      setState({ message: tr('scan.savingN', { i: i + 1, n }) });
-      FG.update(fgTitle(), tr('scan.savingN', { i: i + 1, n }), i + 1, n);
-    });
-    const stopped = cancel || Date.now() - t0 > budgetMs;
-    // note 存代號（執行紀錄畫面再依語言顯示）
-    await DB.addRun({ started, mode, scanned, matched: [...decisions.values()].filter((d) => d.kind === 'match').length, review, saved, errors, note: stopped ? 'stopped' : '' });
-    if (saved > 0 && s.notify) {
-      await Notifications.scheduleNotificationAsync({
-        content: { title: tr('notif.newTitle'), body: tr('notif.newBody', { n: saved, album: s.albumName, review }) },
-        trigger: null,
-      }).catch(() => {});
+    // 自動檢查沒有新照片、也沒有還沒存的照片：不用重新判斷（每 15～60 分鐘一次，省電）
+    const idle = mode === 'background' && scanned === 0 && errors === 0 && (await DB.unsavedMatches()) === 0;
+    let matched = 0;
+    if (!idle) {
+      setState({ phase: 'decide', message: tr('scan.deciding') });
+      const decisions = await judge();
+      review = [...decisions.values()].filter((d) => d.kind === 'review').length;
+      matched = [...decisions.values()].filter((d) => d.kind === 'match').length;
+      setState({ phase: 'save', message: tr('scan.saving') });
+      FG.update(fgTitle(), tr('scan.fgSaving'), 0, 0, true);
+      // 背景：時間到了就先停，剩下的下次再存（系統給的時間有限）
+      savedIds.push(...await saveMatches(decisions, (i, n) => {
+        setState({ message: tr('scan.savingN', { i: i + 1, n }) });
+        FG.update(fgTitle(), tr('scan.savingN', { i: i + 1, n }), i + 1, n);
+      }, mode === 'background' ? t0 + budgetMs + 90e3 : Infinity));
     }
-    else if (mode === 'manual' && s.notify && AppState.currentState !== 'active' && !stopped) {
-      // 在背景整理完了：通知一聲（有存到新照片的話，上面已經通知過了）
-      await Notifications.scheduleNotificationAsync({
-        content: { title: tr('notif.doneTitle'), body: review ? tr('notif.doneReview', { n: review }) : tr('notif.doneNone', { n: scanned }) },
-        trigger: null,
-      }).catch(() => {});
+    const saved = savedIds.length;
+    const stopped = cancel || Date.now() - t0 > budgetMs;
+    // note 存代號（執行紀錄畫面再依語言顯示）；自動檢查什麼都沒找到時不記，紀錄才不會被洗版
+    if (mode === 'manual' || scanned || saved || errors) {
+      await DB.addRun({ started, mode, scanned, matched, review, saved, errors, note: stopped ? 'stopped' : '' });
+    }
+    if (mode === 'background') {
+      if (idle) review = (await DB.counts()).review;
+      await Notices.afterBackground(savedIds.slice(notified), { pendingLeft: await DB.pendingCount(s.videos), review }).catch((e) => console.warn('notice failed', e));
+    } else {
+      await Notices.afterManual({ saved, review, scanned, stopped }).catch(() => {});
     }
     await DB.setMeta('last_scan', DB.now());
     return { scanned, saved, review, errors, stopped };

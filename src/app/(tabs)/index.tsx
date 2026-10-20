@@ -5,6 +5,7 @@ import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View, type Vi
 import { isCJK, sp, tr, useLang } from '../../i18n';
 import * as DB from '../../services/db';
 import { NeedSignIn } from '../../services/drive';
+import { unseenCount } from '../../services/notices';
 import { interruptedScan, requestStop, runScan } from '../../services/scanner';
 import { useApp } from '../../services/state';
 import { CoverArt, Logo, Polaroid, Ribbon } from '../../ui/art';
@@ -65,6 +66,7 @@ export default function Home() {
   const [faces, setFaces] = useState<number[]>([]);
   const [refsOk, setRefsOk] = useState(0);
   const [auto, setAuto] = useState(true);
+  const [unseen, setUnseen] = useState(0);
 
   useFocusEffect(useCallback(() => {
     DB.recentSaved(12).then(setRecent);
@@ -72,6 +74,7 @@ export default function Home() {
     DB.decisionsList('review').then((l) => setFaces(l.slice(0, 3).map((x) => x.faceId))).catch(() => {});
     DB.listRefs().then((r) => setRefsOk(r.filter((x) => x.status === 'ok' || x.status === 'anchor' || x.status === 'multi').length)).catch(() => {});
     DB.getSettings().then((x) => setAuto(x.autoDaily));
+    unseenCount().then(setUnseen).catch(() => {});
   }, [app.version]));
 
   const latest = usePreview(recent[0]?.file_id || null, 768);
@@ -125,9 +128,9 @@ export default function Home() {
               <Text style={s.brandName}>童年拾光</Text>
               <Text style={s.brandSub}>{tr('home.brandSub')}</Text>
             </View>
-            <Pressable style={s.bell} onPress={() => router.push('/logs')} accessibilityLabel={tr('home.logs')}>
+            <Pressable style={s.bell} onPress={() => router.push('/new')} accessibilityLabel={tr('new.title')}>
               <Icon name="bell" size={21} />
-              {app.counts.savedToday > 0 ? <View style={s.bellDot} /> : null}
+              {unseen > 0 || app.counts.savedToday > 0 ? <View style={s.bellDot} /> : null}
             </Pressable>
           </View>
         ) : null}

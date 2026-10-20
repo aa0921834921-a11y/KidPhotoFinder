@@ -105,5 +105,110 @@ class ForegroundModule : Module() {
         false
       }
     }
+
+    /** 打開這個 App 的「通知」系統設定（家長在系統裡把通知關掉時用） */
+    Function("openNotificationSettings") {
+      var ok = false
+      try {
+        val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+          .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(i)
+        ok = true
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
+
+    // ---------- 新照片通知 ----------
+
+    /** 合成通知用的照片（以孩子的臉為中心裁切；多張就並排），回傳 JPEG 的檔案路徑 */
+    AsyncFunction("compose") { o: ComposeOptions ->
+      Photos.compose(context, o)
+    }
+
+    /** 「新照片」通知分類（名字跟著 App 的語言） */
+    Function("setPhotoChannel") { name: String, desc: String ->
+      var ok = false
+      try {
+        Photos.ensureChannel(context, name, desc)
+        ok = true
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
+
+    /** 發出新照片通知（大張照片＋按鈕）。送不出去回傳 false。 */
+    Function("notify") { o: NoticeOptions ->
+      var ok = false
+      try {
+        ok = Photos.post(context, o)
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
+
+    /** 收掉一則通知（從通知上的按鈕打開 App 時，系統不會自動收掉） */
+    Function("cancelNotice") { id: Int ->
+      var ok = false
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel(id)
+        ok = true
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
+
+    /** 系統有沒有允許這個 App 發通知 */
+    Function("canNotify") {
+      var ok = false
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ok = nm.areNotificationsEnabled()
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
+
+    /** 「新照片」這個通知分類有沒有被家長在系統設定裡關掉 */
+    Function("photoChannelBlocked") {
+      var blocked = false
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val ch = nm.getNotificationChannel(Photos.CHANNEL_ID)
+        blocked = ch != null && ch.importance == NotificationManager.IMPORTANCE_NONE
+      } catch (e: Exception) {
+        blocked = false
+      }
+      blocked
+    }
+
+    /** 分享手機相簿裡的照片；pkg 有填就直接交給那個 App（例如 LINE） */
+    Function("share") { o: ShareOptions ->
+      var ok = false
+      try {
+        ok = Photos.share(context, appContext.currentActivity, o)
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
+
+    /** 手機有沒有裝某個 App（例如 LINE） */
+    Function("isInstalled") { pkg: String ->
+      var ok = false
+      try {
+        ok = context.packageManager.getLaunchIntentForPackage(pkg) != null
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
+    }
   }
 }

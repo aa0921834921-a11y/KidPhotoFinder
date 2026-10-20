@@ -118,7 +118,7 @@ export default function Onboarding() {
       await MediaLibrary.requestPermissionsAsync(true);
       const notify = await askNotificationPermission();
       await DB.saveSettings({ onboarded: true, notify });
-      await syncSchedule(true).catch(() => {});
+      await syncSchedule().catch(() => {}); // 開始自動找老師的新照片
       router.replace('/');
     } finally { setBusy(false); }
   };

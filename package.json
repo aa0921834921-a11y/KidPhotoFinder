@@ -1,7 +1,7 @@
 {
   "name": "kid-photo-finder",
   "version": "1.0.0",
-  "main": "expo-router/entry",
+  "main": "index.ts",
   "dependencies": {
     "@react-native-google-signin/google-signin": "^16.1.5",
     "@shopify/react-native-skia": "^2.14.0",

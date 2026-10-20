@@ -33,16 +33,22 @@ export function db(): Promise<SQLite.SQLiteDatabase> {
       await d.execAsync(SCHEMA);
       // 手機相簿（LINE 下載）的照片記住是哪個相簿來的
       await d.execAsync('ALTER TABLE files ADD COLUMN src_album TEXT').catch(() => {});
+      // 第一次看到這個檔案的時間：用來分辨「老師剛上傳的」和「以前就有的」照片
+      await d.execAsync('ALTER TABLE files ADD COLUMN first_seen TEXT').catch(() => {});
       return d;
     })();
   }
   return dbp;
 }
 
-export const now = () => {
-  const d = new Date(), p = (n: number) => String(n).padStart(2, '0');
+/** 手機時間，資料庫裡的寫法：「2026-10-20 10:41:05」 */
+export const localTime = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 };
+export const now = () => localTime(new Date());
+/** 把資料庫裡的時間轉回來（手機時間） */
+export const parseLocal = (t: string) => new Date(t.replace(' ', 'T'));
 
 export const embToBlob = (v: Float32Array) => new Uint8Array(toFloat16(v).buffer);
 export const blobToEmb = (b: Uint8Array) => {
@@ -56,17 +62,32 @@ export type Settings = {
   folderId: string | null;
   folderName: string | null;
   strictness: 'loose' | 'standard' | 'strict';
+  /** 自動找新照片（在背景定時看老師的資料夾） */
   autoDaily: boolean;
   videos: boolean;
   wifiOnly: boolean;
   albumName: string;
+  /** 老師上傳了有孩子的新照片時通知我 */
   notify: boolean;
   onboarded: boolean;
+  /** 通知裡顯示照片 */
+  notifyPhoto: boolean;
+  /** 鎖定畫面上隱藏照片（只顯示「有新照片」） */
+  lockHide: boolean;
+  /** 只在白天通知：dayFrom 點到 dayTo 點以外找到的照片，早上一次告訴你 */
+  quiet: boolean;
+  dayFrom: number;
+  dayTo: number;
+  /** 多久看一次老師的資料夾（分鐘） */
+  freq: 15 | 30 | 60;
+  /** 孩子的小名（通知裡用；空的就寫「孩子」） */
+  childName: string;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   folderId: null, folderName: null, strictness: 'standard', autoDaily: true, videos: false,
   wifiOnly: true, albumName: '童年拾光', notify: true, onboarded: false,
+  notifyPhoto: true, lockHide: false, quiet: true, dayFrom: 7, dayTo: 21, freq: 30, childName: '',
 };
 
 export async function getSettings(): Promise<Settings> {
@@ -98,9 +119,11 @@ export async function setMeta(k: string, v: string): Promise<void> {
 export type FileRow = {
   id: string; name: string; folder: string; mime: string; size: number; modified: string; md5: string | null;
   kind: 'image' | 'video'; status: 'new' | 'done' | 'bad'; nfaces: number | null; w: number | null; h: number | null;
+  /** 第一次看到這個檔案的時間（舊資料是 null） */
+  first_seen?: string | null;
 };
 
-export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w' | 'h'>[]): Promise<number> {
+export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w' | 'h' | 'first_seen'>[]): Promise<number> {
   const d = await db();
   const t = now();
   let fresh = 0;
@@ -110,8 +133,8 @@ export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w
         'SELECT md5, size, status FROM files WHERE id = ?', f.id);
       if (!old) {
         fresh++;
-        await d.runAsync('INSERT INTO files(id, name, folder, mime, size, modified, md5, kind, status, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          f.id, f.name, f.folder, f.mime, f.size, f.modified, f.md5, f.kind, 'new', t);
+        await d.runAsync('INSERT INTO files(id, name, folder, mime, size, modified, md5, kind, status, seen_at, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          f.id, f.name, f.folder, f.mime, f.size, f.modified, f.md5, f.kind, 'new', t, t);
       } else {
         const changed = (f.md5 && old.md5 && f.md5 !== old.md5) || (!f.md5 && f.size !== old.size);
         await d.runAsync('UPDATE files SET name = ?, folder = ?, seen_at = ?' + (changed ? ", status = 'new', md5 = ?, size = ?" : '') + ' WHERE id = ?',
@@ -133,10 +156,16 @@ export async function scanProgress(includeVideos: boolean): Promise<{ all: numbe
   return { all: r?.all || 0, done: r?.done || 0, withFaces: r?.withFaces || 0 };
 }
 
-export async function filesToScan(includeVideos: boolean): Promise<FileRow[]> {
+/**
+ * 還沒看過的照片。freshAfter：這個時間之後才第一次看到的（老師剛上傳的）排在最前面，
+ * 以前的照片還沒看完時，新照片也能馬上找到、馬上通知。
+ */
+export async function filesToScan(includeVideos: boolean, freshAfter: string | null = null): Promise<FileRow[]> {
   const d = await db();
+  const where = `status = 'new' AND id NOT LIKE 'local:%' ${includeVideos ? '' : "AND kind = 'image'"}`;
+  if (!freshAfter) return d.getAllAsync<FileRow>(`SELECT * FROM files WHERE ${where} ORDER BY modified DESC`);
   return d.getAllAsync<FileRow>(
-    `SELECT * FROM files WHERE status = 'new' AND id NOT LIKE 'local:%' ${includeVideos ? '' : "AND kind = 'image'"} ORDER BY modified DESC`);
+    `SELECT * FROM files WHERE ${where} ORDER BY CASE WHEN first_seen > ? THEN 0 ELSE 1 END, modified DESC`, freshAfter);
 }
 
 export async function saveScan(fileId: string, faces: { frame: number; box: number[]; emb: Float32Array }[], w: number, h: number) {
@@ -270,6 +299,86 @@ export async function savedByFolder() {
      ORDER BY f.folder DESC, f.name`);
 }
 
+/* ---------------------------------------------------------------- 新照片通知 */
+
+/**
+ * 「從什麼時候開始算老師新上傳的」：第一次完整看完老師資料夾的時間（換資料夾就重新算）。
+ * 在這之前就在資料夾裡的照片是「以前的照片」，慢慢整理、不一張一張通知。
+ */
+export async function getBaseline(folderId: string): Promise<string | null> {
+  const v = (await getMeta('ntf_baseline').catch(() => null)) || '';
+  const i = v.indexOf('|');
+  return i > 0 && v.slice(0, i) === folderId ? v.slice(i + 1) : null;
+}
+
+export async function setBaseline(folderId: string, t: string) {
+  await setMeta('ntf_baseline', `${folderId}|${t}`);
+}
+
+/** 這些照片裡，哪些是 after 之後才第一次看到的（老師剛上傳的） */
+export async function freshAmong(ids: string[], after: string): Promise<Set<string>> {
+  const d = await db();
+  const out = new Set<string>();
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    const rows = await d.getAllAsync<{ id: string }>(
+      `SELECT id FROM files WHERE first_seen > ? AND id IN (${part.map(() => '?').join(',')})`, after, ...part);
+    for (const r of rows) out.add(r.id);
+  }
+  return out;
+}
+
+export type PhotoInfo = {
+  file_id: string; asset_id: string; at: string; name: string; folder: string; kind: string; modified: string;
+  first_seen: string | null; w: number | null; h: number | null;
+  /** 孩子的臉（在照片裡的座標）；沒有的話是 null */
+  fx: number | null; fy: number | null; fw: number | null; fh: number | null;
+};
+
+/** 存進相簿的照片的資料（含孩子的臉在哪裡），順序跟 ids 一樣 */
+export async function photosInfo(ids: string[]): Promise<PhotoInfo[]> {
+  const d = await db();
+  const out: PhotoInfo[] = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    out.push(...await d.getAllAsync<PhotoInfo>(
+      `SELECT s.file_id, s.asset_id, s.at, f.name, f.folder, f.kind, f.modified, f.first_seen, f.w, f.h,
+              fa.x AS fx, fa.y AS fy, fa.w AS fw, fa.h AS fh
+       FROM saved s JOIN files f ON f.id = s.file_id
+       LEFT JOIN decisions dc ON dc.file_id = s.file_id
+       LEFT JOIN faces fa ON fa.id = dc.face_id
+       WHERE s.file_id IN (${part.map(() => '?').join(',')})`, ...part));
+  }
+  const pos = new Map(ids.map((id, k) => [id, k]));
+  return out.sort((a, b) => (pos.get(a.file_id) ?? 0) - (pos.get(b.file_id) ?? 0));
+}
+
+/** 這些資料夾裡，since 之後老師上傳了幾張（照片＋影片），和最後一張是什麼時候看到的 */
+export async function uploadedSince(folders: string[], since: string): Promise<{ folder: string; n: number; last: string }[]> {
+  if (!folders.length) return [];
+  const d = await db();
+  return d.getAllAsync<{ folder: string; n: number; last: string }>(
+    `SELECT folder, COUNT(*) AS n, MAX(first_seen) AS last FROM files
+     WHERE first_seen >= ? AND id NOT LIKE 'local:%' AND folder IN (${folders.map(() => '?').join(',')})
+     GROUP BY folder`, since, ...folders);
+}
+
+/** 確定是孩子、但還沒存進相簿的照片有幾張 */
+export async function unsavedMatches(): Promise<number> {
+  const d = await db();
+  const r = await d.getFirstAsync<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM decisions WHERE kind = 'match' AND file_id NOT IN (SELECT file_id FROM saved)");
+  return r?.n || 0;
+}
+
+/** 還有幾張照片沒看過 */
+export async function pendingCount(includeVideos: boolean): Promise<number> {
+  const d = await db();
+  const r = await d.getFirstAsync<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM files WHERE status = 'new' AND id NOT LIKE 'local:%' ${includeVideos ? '' : "AND kind = 'image'"}`);
+  return r?.n || 0;
+}
+
 /* ---------------------------------------------------------------- 參考照片 */
 
 export async function listRefs() {
@@ -320,6 +429,8 @@ export async function lastRuns(limit = 30) {
 export async function resetAll() {
   const d = await db();
   await d.execAsync('DELETE FROM files; DELETE FROM faces; DELETE FROM labels; DELETE FROM decisions; DELETE FROM saved; DELETE FROM runs;');
+  // 看資料夾的進度、「從什麼時候開始算新照片」也一起重來（不然重新看到的舊照片會被當成新上傳的）
+  await d.execAsync("DELETE FROM meta WHERE k IN ('last_list', 'list_resume', 'folder_map', 'quick_at', 'ntf_baseline', 'ntf_batch', 'backlog_saved')");
 }
 
 /* ---------------------------------------------------------------- 手機相簿（LINE 下載）的照片 */

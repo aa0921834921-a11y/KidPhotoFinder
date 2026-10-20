@@ -93,6 +93,15 @@ export class NeedSignIn extends Error {
   constructor() { super(tr('err.signInAgain')); }
 }
 
+/** Google 雲端硬碟回傳錯誤（status 是 HTTP 狀態碼） */
+export class DriveError extends Error {
+  status: number;
+  constructor(status: number) {
+    super(tr('err.drive', { status }));
+    this.status = status;
+  }
+}
+
 async function api<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const qs = new URLSearchParams({ supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', ...params });
   for (let attempt = 0; ; attempt++) {
@@ -103,13 +112,13 @@ async function api<T>(path: string, params: Record<string, string> = {}): Promis
     // 背景時 setTimeout 會暫停，改用原生的等待
     if ((r.status === 429 || r.status >= 500) && attempt < 4) { await FG.sleep(800 * 2 ** attempt); continue; }
     if (r.status === 401) throw new NeedSignIn();
-    throw new Error(tr('err.drive', { status: r.status }));
+    throw new DriveError(r.status);
   }
 }
 
 type DriveFile = {
   id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; md5Checksum?: string;
-  thumbnailLink?: string; shortcutDetails?: { targetId: string; targetMimeType: string };
+  thumbnailLink?: string; shortcutDetails?: { targetId: string; targetMimeType: string }; parents?: string[];
 };
 
 async function listAll(q: string, fields: string): Promise<DriveFile[]> {
@@ -154,8 +163,11 @@ export type ListedFile = {
   kind: 'image' | 'video'; thumb: string | null;
 };
 
-/** 看資料夾看到一半的進度（存起來，App 被關掉後可以接著看） */
-export type ListState = { queue: { id: string; path: string; page?: string }[]; seen: string[]; count: number };
+/**
+ * 看資料夾看到一半的進度（存起來，App 被關掉後可以接著看）。
+ * dirs：已經看到的資料夾（ID 和路徑），之後「快速檢查」只要問這些資料夾有沒有新檔案。
+ */
+export type ListState = { queue: { id: string; path: string; page?: string }[]; seen: string[]; count: number; dirs?: [string, string][] };
 
 /**
  * 列出資料夾（含所有子資料夾）裡的照片和影片。
@@ -163,10 +175,17 @@ export type ListState = { queue: { id: string; path: string; page?: string }[]; 
  * 讓呼叫的人把這批檔案和目前進度存起來。傳入 resume 就從上次停下的地方接著看。
  */
 export async function listFolder(rootId: string, rootName: string, onProgress?: (n: number) => void,
-  opts: { resume?: ListState | null; onWave?: (files: ListedFile[], state: ListState) => Promise<void> } = {}): Promise<ListedFile[]> {
+  opts: {
+    resume?: ListState | null; onWave?: (files: ListedFile[], state: ListState) => Promise<void>;
+    /** 傳進來的話，會填入看到的每個資料夾（ID → 路徑，包含最上層） */
+    dirs?: Map<string, string>;
+  } = {}): Promise<ListedFile[]> {
   const fields = 'id, name, mimeType, size, modifiedTime, md5Checksum, thumbnailLink, shortcutDetails';
   const queue: ListState['queue'] = opts.resume ? [...opts.resume.queue] : [{ id: rootId, path: rootName }];
   const seen = new Set<string>(opts.resume ? opts.resume.seen : [rootId]);
+  const dirs = opts.dirs || new Map<string, string>();
+  if (opts.resume?.dirs) for (const [id, path] of opts.resume.dirs) dirs.set(id, path);
+  if (!opts.resume) dirs.set(rootId, rootName);
   let count = opts.resume?.count || 0;
   const out: ListedFile[] = [];
   while (queue.length) {
@@ -184,7 +203,7 @@ export async function listFolder(rootId: string, rootName: string, onProgress?: 
         const isFolder = it.mimeType === FOLDER || it.shortcutDetails?.targetMimeType === FOLDER;
         if (isFolder) {
           const tid = it.mimeType === FOLDER ? it.id : it.shortcutDetails!.targetId;
-          if (!seen.has(tid)) { seen.add(tid); queue.push({ id: tid, path: `${path}/${it.name}` }); }
+          if (!seen.has(tid)) { seen.add(tid); queue.push({ id: tid, path: `${path}/${it.name}` }); dirs.set(tid, `${path}/${it.name}`); }
           continue;
         }
         const image = it.mimeType.startsWith('image/') || IMAGE_EXT.test(it.name);
@@ -200,10 +219,65 @@ export async function listFolder(rootId: string, rootName: string, onProgress?: 
     queue.unshift(...more); // 同一個資料夾還有下一頁的，先接著看完
     out.push(...batch);
     count += batch.length;
-    await opts.onWave?.(batch, { queue: [...queue], seen: [...seen], count });
+    await opts.onWave?.(batch, { queue: [...queue], seen: [...seen], count, dirs: [...dirs] });
     onProgress?.(count);
   }
   return out;
+}
+
+const toListed = (it: DriveFile, folder: string): ListedFile | null => {
+  const image = it.mimeType.startsWith('image/') || IMAGE_EXT.test(it.name);
+  const video = it.mimeType.startsWith('video/') || VIDEO_EXT.test(it.name);
+  if (!image && !video) return null;
+  return {
+    id: it.id, name: it.name, folder, mime: it.mimeType, size: Number(it.size || 0),
+    modified: it.modifiedTime || '', md5: it.md5Checksum || null, kind: image ? 'image' : 'video',
+    thumb: it.thumbnailLink || null,
+  };
+};
+
+/**
+ * 快速檢查：只問「這些資料夾裡，since 之後新增或改過的檔案」，不用把整個資料夾重看一遍
+ * （老師上傳的照片，修改時間常常是拍照的時間，所以也要看「建立時間」）。
+ * 一次問 30 個資料夾；回傳新的照片／影片，和新建的子資料夾（例如新的活動）。
+ */
+export async function listChangedSince(dirs: Map<string, string>, sinceMs: number): Promise<{ files: ListedFile[]; newDirs: { id: string; path: string }[] }> {
+  const since = new Date(sinceMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const fields = 'id, name, mimeType, size, modifiedTime, md5Checksum, thumbnailLink, shortcutDetails, parents';
+  const files: ListedFile[] = [];
+  const newDirs: { id: string; path: string }[] = [];
+  const known = new Set(dirs.keys());
+  const ask = async (ids: string[]): Promise<void> => {
+    const q = `(${ids.map((id) => `'${id}' in parents`).join(' or ')}) and trashed = false and (createdTime > '${since}' or modifiedTime > '${since}')`;
+    let found: DriveFile[];
+    try {
+      found = await listAll(q, fields);
+    } catch (e) {
+      // 條件太長被拒絕（400）：分成兩半再問
+      if (e instanceof DriveError && e.status === 400 && ids.length > 1) {
+        const half = Math.ceil(ids.length / 2);
+        await ask(ids.slice(0, half));
+        await ask(ids.slice(half));
+        return;
+      }
+      throw e;
+    }
+    for (const it of found) {
+      const parent = (it.parents || []).find((p) => dirs.has(p));
+      const path = parent ? dirs.get(parent)! : dirs.get(ids[0])!;
+      const isFolder = it.mimeType === FOLDER || it.shortcutDetails?.targetMimeType === FOLDER;
+      if (isFolder) {
+        const tid = it.mimeType === FOLDER ? it.id : it.shortcutDetails!.targetId;
+        if (!known.has(tid)) { known.add(tid); newDirs.push({ id: tid, path: `${path}/${it.name}` }); }
+        continue;
+      }
+      const f = toListed(it, path);
+      if (f) files.push(f);
+    }
+  };
+  const ids = [...dirs.keys()];
+  for (let i = 0; i < ids.length; i += 30) await ask(ids.slice(i, i + 30));
+  return { files, newDirs };
 }
 
 /* ---------------------------------------------------------------- 下載 */

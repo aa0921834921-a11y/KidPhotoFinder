@@ -3,6 +3,10 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- 「傳到 LINE」：要看得到手機有沒有裝 LINE（Android 11 起要先宣告） -->
+  <queries>
+    <package android:name="jp.naver.line.android" />
+  </queries>
   <application>
     <service
       android:name="tw.kidphotofinder.foreground.ScanService"

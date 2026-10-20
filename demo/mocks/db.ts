@@ -2,9 +2,18 @@ const BASE = process.env.EXPO_PUBLIC_BASE_URL || '';
 /* 預覽用的假資料（只在網頁預覽裡用） */
 const q = new URLSearchParams((globalThis as any).location?.search || '');
 const p = (n: number) => String(n).padStart(2, '0');
-export const now = () => { const d = new Date(); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
-export type Settings = { folderId: string | null; folderName: string | null; strictness: 'loose' | 'standard' | 'strict'; autoDaily: boolean; videos: boolean; wifiOnly: boolean; albumName: string; notify: boolean; onboarded: boolean };
-export const DEFAULT_SETTINGS: Settings = { folderId: 'f', folderName: '115-1 健康班', strictness: 'standard', autoDaily: true, videos: false, wifiOnly: true, albumName: '童年拾光', notify: true, onboarded: q.get('ob') !== '1' };
+export const localTime = (d: Date) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+export const now = () => localTime(new Date());
+export const parseLocal = (t: string) => new Date(t.replace(' ', 'T'));
+export type Settings = {
+  folderId: string | null; folderName: string | null; strictness: 'loose' | 'standard' | 'strict'; autoDaily: boolean; videos: boolean; wifiOnly: boolean;
+  albumName: string; notify: boolean; onboarded: boolean;
+  notifyPhoto: boolean; lockHide: boolean; quiet: boolean; dayFrom: number; dayTo: number; freq: 15 | 30 | 60; childName: string;
+};
+export const DEFAULT_SETTINGS: Settings = {
+  folderId: 'f', folderName: '115-1 健康班', strictness: 'standard', autoDaily: true, videos: false, wifiOnly: true, albumName: '童年拾光', notify: true, onboarded: q.get('ob') !== '1',
+  notifyPhoto: true, lockHide: q.get('lock') === '1', quiet: true, dayFrom: 7, dayTo: 21, freq: 30, childName: q.get('kid') ?? '小宇',
+};
 let settings = { ...DEFAULT_SETTINGS };
 export async function getSettings() { return { ...settings }; }
 export async function saveSettings(x: Partial<Settings>) { settings = { ...settings, ...x }; return { ...settings }; }
@@ -69,3 +78,21 @@ export async function lastRuns() {
   ];
 }
 export async function resetAll() {}
+
+/* ---------------------------------------------------------------- 新照片通知（示範：老師剛上傳的兩個活動） */
+export type PhotoInfo = {
+  file_id: string; asset_id: string; at: string; name: string; folder: string; kind: string; modified: string;
+  first_seen: string | null; w: number | null; h: number | null; fx: number | null; fy: number | null; fw: number | null; fh: number | null;
+};
+// 示範照片裡孩子的臉大概在哪裡（480 x 480）
+const FACE: Record<string, number[]> = { p03: [240, 180, 170, 140], p05: [150, 150, 180, 160], p08: [160, 120, 170, 150] };
+export async function photosInfo(ids: string[]): Promise<PhotoInfo[]> {
+  const rows = SAVED.map(savedRow);
+  return ids.map((id) => rows.find((r) => r.file_id === id)).filter((r): r is NonNullable<typeof r> => !!r).map((r) => {
+    const f = FACE[r.file_id];
+    return { ...r, kind: 'image', first_seen: today + ' 10:31:00', w: 480, h: 480, fx: f ? f[0] : null, fy: f ? f[1] : null, fw: f ? f[2] : null, fh: f ? f[3] : null };
+  });
+}
+export async function uploadedSince(folders: string[], _since: string) {
+  return folders.map((f, i) => ({ folder: f, n: i ? 18 : 32, last: today + ' 10:31:00' }));
+}

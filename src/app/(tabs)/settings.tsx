@@ -1,9 +1,10 @@
-import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { LANGS, setLang, tr, useLang, type TStrKey } from '../../i18n';
-import { askNotificationPermission, backgroundAvailable, syncSchedule } from '../../services/background';
+import { backgroundAvailable, syncSchedule } from '../../services/background';
 import * as DB from '../../services/db';
+import { everyWord, hoursText } from '../../services/notifyPrefs';
 import { clearScanCache, restore, signIn, signOut, type Account } from '../../services/drive';
 import { refreshCounts, scheduleApply } from '../../services/scanner';
 import { bump } from '../../services/state';
@@ -127,7 +128,9 @@ export default function Settings() {
   const [acct, setAcct] = useState<Account | null>(null);
   const [pick, setPick] = useState(false);
   const [bg, setBg] = useState(true);
-  useEffect(() => { DB.getSettings().then(setSt); restore().then(setAcct); backgroundAvailable().then(setBg); }, []);
+  useEffect(() => { restore().then(setAcct); backgroundAvailable().then(setBg).catch(() => {}); }, []);
+  // 從「新照片通知」頁回來時，重新讀設定
+  useFocusEffect(useCallback(() => { DB.getSettings().then(setSt); }, []));
   if (!st) return <Paper cap={tr('set.cap')}><View /></Paper>;
   const save = async (p: Partial<DB.Settings>) => setSt(await DB.saveSettings(p));
   const card = [cardStyle(t), s.card];
@@ -181,14 +184,12 @@ export default function Settings() {
 
         <View style={card}>
           <SectionTitle>{tr('set.auto')}</SectionTitle>
-          <Row first icon="clock" title={tr('set.daily')} sub={bg ? tr('set.dailySub') : tr('set.dailyBlocked')}>
-            <Toggle value={st.autoDaily} label={tr('set.daily')} onValueChange={async (v) => { await save({ autoDaily: v }); await syncSchedule(v); }} />
+          <Row first icon="clock" title={tr('set.daily')} sub={bg ? tr('set.dailySub', { every: everyWord(st) }) : tr('set.dailyBlocked')}>
+            <Toggle value={st.autoDaily} label={tr('set.daily')} onValueChange={async (v) => { await save({ autoDaily: v }); await syncSchedule().catch(() => {}); }} />
           </Row>
-          <Row icon="bell" title={tr('set.notify')}>
-            <Toggle value={st.notify} label={tr('set.notify')} onValueChange={async (v) => {
-              if (v && !(await askNotificationPermission())) { Alert.alert(tr('set.notifyOffTitle'), tr('set.notifyOffBody')); return; }
-              save({ notify: v });
-            }} />
+          <Row icon="bell" title={tr('set.notify')} sub={st.notify ? tr('set.notifyOn', { hours: hoursText(st) }) : tr('set.notifyOff')}
+            onPress={() => router.push('/notify')}>
+            <Text style={s.v}>›</Text>
           </Row>
           <Row icon="album" title={tr('set.line')} sub={tr('set.lineSub')} onPress={() => router.push('/clean')}><Text style={s.v}>›</Text></Row>
           <Row icon="list" title={tr('set.logs')} sub={tr('set.logsSub')} onPress={() => router.push('/logs')}><Text style={s.v}>›</Text></Row>
@@ -207,6 +208,7 @@ export default function Settings() {
       <FolderPicker visible={pick} onClose={() => setPick(false)} onPick={async (f) => {
         setPick(false);
         await save({ folderId: f.id, folderName: f.name });
+        await syncSchedule().catch(() => {});
       }} />
     </Paper>
   );
