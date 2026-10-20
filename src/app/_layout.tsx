@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { loadLang } from '../i18n';
 import { setupNotifications } from '../services/background';
 import { getSettings } from '../services/db';
 import { refreshCounts } from '../services/scanner';
@@ -19,6 +20,7 @@ export default function Root() {
   const t = useTheme();
   useEffect(() => {
     (async () => {
+      await loadLang().catch(() => {}); // 先讀語言，畫面一出來就是對的語言
       await loadTheme().catch(() => {});
       await setupNotifications().catch(() => {});
       const s = await getSettings();

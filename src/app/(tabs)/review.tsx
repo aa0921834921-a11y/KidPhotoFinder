@@ -4,6 +4,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { THRESHOLDS } from '../../core/decide';
+import { sp, tr, useLang } from '../../i18n';
+
+/** 小標籤裡的字不要被拆到兩行 */
+const chip = (x: string) => ` ${x} `.replace(/ /g, '\u00A0');
 import * as DB from '../../services/db';
 import { refreshCounts, scheduleApply } from '../../services/scanner';
 import { useApp } from '../../services/state';
@@ -20,6 +24,7 @@ type Mark = 1 | -1 | 0; // 是 / 不是 / 跳過
 function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number; onAnswer: (m: Mark) => void }) {
   const t = useTheme();
   const s = useStyles();
+  useLang();
   const w = useContentWidth(16);
   const cardW = Math.min(w - 50, 300);
   const photo = cardW - 20;
@@ -58,7 +63,7 @@ function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number
   return (
     <View style={{ alignItems: 'center', gap: 14, paddingTop: 6 }}>
       <View style={[s.tip, { alignSelf: 'stretch', alignItems: 'center' }]}>
-        <Text style={s.tipText}>往右滑＝<Text style={[s.chip, { backgroundColor: t.c.yes }]}> ✓ 是 </Text>　往左滑＝<Text style={[s.chip, { backgroundColor: t.c.no }]}> ✕ 不是 </Text></Text>
+        <Text style={s.tipText}>{tr('rv.swipeRight')}<Text style={[s.chip, { backgroundColor: t.c.yes }]}>{chip(`✓ ${tr('common.yes')}`)}</Text>{sp()}{tr('rv.swipeLeft')}<Text style={[s.chip, { backgroundColor: t.c.no }]}>{chip(`✕ ${tr('common.no')}`)}</Text></Text>
       </View>
       <View style={{ width: cardW, height: photo + 46 }}>
         <View style={[s.cardBack, { borderRadius: rounded ? 24 : 6 }]} />
@@ -67,25 +72,25 @@ function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number
           <Animated.View style={[s.fcard, rounded && { borderRadius: t.id === 'candy' ? 26 : 24, paddingBottom: t.captions ? 36 : 10 }, t.id === 'candy' && s.fcardCandy,
             { transform: [{ translateX: drag }, { rotate }] }]}>
             <Tape i={0} />
-            <Pressable onPress={() => { if (Date.now() - moved.current > 400 && !busy.current) router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } }); }} accessibilityLabel="看整張照片">
+            <Pressable onPress={() => { if (Date.now() - moved.current > 400 && !busy.current) router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } }); }} accessibilityLabel={tr('rv.viewWhole')}>
               <FaceCard faceId={item.faceId} size={photo} radius={rounded ? 18 : 0} />
             </Pressable>
             {t.captions ? <Text style={s.cap3} numberOfLines={1}>{item.folder.split('/').pop()}</Text> : null}
-            <Animated.View style={[s.stamp, s.stampYes, { opacity: yesOp }]}><Text style={[s.stampText, { color: t.c.yes }]}>★ 是</Text></Animated.View>
-            <Animated.View style={[s.stamp, s.stampNo, { opacity: noOp }]}><Text style={[s.stampText, { color: t.c.noDeep }]}>✕ 不是</Text></Animated.View>
+            <Animated.View style={[s.stamp, s.stampYes, { opacity: yesOp }]}><Text style={[s.stampText, { color: t.c.yes }]}>★ {tr('common.yes')}</Text></Animated.View>
+            <Animated.View style={[s.stamp, s.stampNo, { opacity: noOp }]}><Text style={[s.stampText, { color: t.c.noDeep }]}>✕ {tr('common.no')}</Text></Animated.View>
           </Animated.View>
           </View>
         </GestureDetector>
       </View>
       <Pressable style={s.ctx} onPress={() => router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } })}>
         <View style={s.ctxImg}>{ctx ? <Image source={{ uri: ctx }} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}</View>
-        <Text style={s.ctxText}>點這裡看整張照片　·　還有 {left} 張</Text>
+        <Text style={s.ctxText}>{tr('rv.ctx', { n: left })}</Text>
       </Pressable>
       <View style={{ flexDirection: 'row', gap: 12, alignSelf: 'stretch' }}>
-        <Btn kind="no" title="✕ 不是" style={{ flex: 1 }} onPress={() => fly(-1)} />
-        <Btn kind="yes" title="★ 是" style={{ flex: 1 }} onPress={() => fly(1)} />
+        <Btn kind="no" title={`✕ ${tr('common.no')}`} style={{ flex: 1 }} onPress={() => fly(-1)} />
+        <Btn kind="yes" title={`★ ${tr('common.yes')}`} style={{ flex: 1 }} onPress={() => fly(1)} />
       </View>
-      <Link title="看不出來，先跳過" color={t.c.muted} onPress={() => fly(0)} />
+      <Link title={tr('rv.skip')} color={t.c.muted} onPress={() => fly(0)} />
     </View>
   );
 }
@@ -95,6 +100,7 @@ function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number
 export default function Review() {
   const t = useTheme();
   const s = useStyles();
+  useLang();
   const version = useApp((x) => x.version);
   const running = useApp((x) => x.running);
   const applying = useApp((x) => x.applying);
@@ -162,10 +168,10 @@ export default function Review() {
 
   const undo = (minutes: number) => {
     DB.undoLabelsSince(minutes, true).then((n) => {
-      if (!n) { Alert.alert('沒有可以復原的', `最近 ${minutes >= 60 ? minutes / 60 + ' 小時' : minutes + ' 分鐘'}沒有標記。`); return; }
-      Alert.alert('復原標記？', `會把最近 ${n} 個標記取消，照片回到待確認（已存進相簿的照片不會被刪）。`, [
-        { text: '取消', style: 'cancel' },
-        { text: '復原', style: 'destructive', onPress: async () => { await DB.undoLabelsSince(minutes); skipped.current.clear(); scheduleApply(); await refreshCounts(); load(); } },
+      if (!n) { Alert.alert(tr('rv.nothingTitle'), tr('rv.nothingBody', { min: minutes })); return; }
+      Alert.alert(tr('rv.undoAskTitle'), tr('rv.undoAskBody', { n }), [
+        { text: tr('common.cancel'), style: 'cancel' },
+        { text: tr('rv.undoBtn'), style: 'destructive', onPress: async () => { await DB.undoLabelsSince(minutes); skipped.current.clear(); scheduleApply(); await refreshCounts(); load(); } },
       ]);
     });
   };
@@ -176,11 +182,11 @@ export default function Review() {
   const showFoot = tab === 'todo' && mode === 'page' && items.length > 0;
 
   return (
-    <Paper cap="確認照片">
+    <Paper cap={tr('rv.cap')}>
       <ScrollView contentContainerStyle={[s.scroll, showFoot && { paddingBottom: 190 }]} showsVerticalScrollIndicator={false}>
-        <HeadCard title="這是我家寶貝嗎？" sub="小幫手不太確定的照片放在這裡。你回答越多，下次就越準。">
+        <HeadCard title={tr('rv.title')} sub={tr('rv.sub')}>
           <Seg style={{ marginTop: 12 }} value={tab} onChange={setTab}
-            items={[{ k: 'todo', t: `待確認 ${items.length}` }, { k: 'done', t: `我標記過的 ${labeled.length}` }]} />
+            items={[{ k: 'todo', t: tr('rv.todo', { n: items.length }) }, { k: 'done', t: tr('rv.done', { n: labeled.length }) }]} />
         </HeadCard>
 
         {tab === 'todo' ? (
@@ -189,18 +195,18 @@ export default function Review() {
               // 剛按完儲存：背景正在用你的答案重新判斷，判斷完下一批會自動出現（不要先說「都確認完了」）
               <View style={[cardStyle(t), { padding: 22, alignItems: 'center', gap: 10 }]}>
                 <ActivityIndicator color={t.c.accent} />
-                <H2 style={{ fontSize: 17, textAlign: 'center' }}>正在用你的答案重新判斷其他照片…</H2>
-                <P muted style={{ fontSize: 13, textAlign: 'center' }}>大約幾秒鐘，完成後下一批需要確認的照片會自動出現在這裡。</P>
+                <H2 style={{ fontSize: 17, textAlign: 'center' }}>{tr('rv.applyingTitle')}</H2>
+                <P muted style={{ fontSize: 13, textAlign: 'center' }}>{tr('rv.applyingBody')}</P>
               </View>
             ) : (
-              <Empty title="都確認完了 ♡" body={running ? '小幫手正在整理，等等可能會有新的。' : '有新照片時會再請你幫忙。'} />
+              <Empty title={tr('rv.allDone')} body={running ? tr('rv.allDoneRunning') : tr('rv.allDoneIdle')} />
             )
           ) : (
             <>
               <View style={s.modes}>
                 {(['page', 'one'] as const).map((k) => (
                   <Pressable key={k} onPress={() => setMode(k)} style={[s.modeBtn, mode === k && { backgroundColor: t.c.segOn }]} accessibilityRole="tab" accessibilityState={{ selected: mode === k }}>
-                    <Text style={[s.modeText, mode === k && { color: t.c.segOnText }]}>{k === 'page' ? '一次一整頁' : '一張一張看'}</Text>
+                    <Text style={[s.modeText, mode === k && { color: t.c.segOnText }]}>{k === 'page' ? tr('rv.modePage') : tr('rv.modeOne')}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -209,15 +215,15 @@ export default function Review() {
                 <>
                   <View style={s.tip}>
                     <Text style={s.tipText}>
-                      點一下臉就能切換：<Text style={[s.chip, { backgroundColor: t.c.yes }]}> ✓ 是 </Text> → <Text style={[s.chip, { backgroundColor: t.c.no }]}> ✕ 不是 </Text> → <Text style={[s.chip, { backgroundColor: t.c.skip }]}> 不選 </Text>
+                      {tr('rv.tapToggle')}<Text style={[s.chip, { backgroundColor: t.c.yes }]}>{chip(`✓ ${tr('common.yes')}`)}</Text> → <Text style={[s.chip, { backgroundColor: t.c.no }]}>{chip(`✕ ${tr('common.no')}`)}</Text> → <Text style={[s.chip, { backgroundColor: t.c.skip }]}>{chip(tr('rv.unset'))}</Text>
                     </Text>
-                    <Text style={s.tipSmall}>很像你家小孩的已經先幫你打勾；沒選的不會被標記，會留到之後再問。長按可以看整張照片。</Text>
+                    <Text style={s.tipSmall}>{tr('rv.tipSmall')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap }}>
                     {page.map((it) => {
                       const m = marksFull[it.faceId] ?? 0;
                       return (
-                        <Pressable key={it.faceId} onPress={() => cycle(it.faceId)} accessibilityLabel={m === 1 ? '是' : m === -1 ? '不是' : '先不選'}
+                        <Pressable key={it.faceId} onPress={() => cycle(it.faceId)} accessibilityLabel={m === 1 ? tr('common.yes') : m === -1 ? tr('common.no') : tr('rv.unsetA11y')}
                           onLongPress={() => router.push({ pathname: '/viewer', params: { id: it.fileId, face: String(it.faceId) } })}
                           style={({ pressed }) => pressed ? { transform: [{ scale: 0.95 }] } : null}>
                           <View style={[s.pf, { width: cell, height: cell }, m === 1 && { borderColor: t.c.yes }, m === -1 && { borderColor: t.c.no }]}>
@@ -238,14 +244,14 @@ export default function Review() {
         ) : (
           <>
             <Card tint={t.c.note} pad={16}>
-              <H2 style={{ fontSize: 16 }}>按錯了嗎？</H2>
-              <P muted style={{ fontSize: 13 }}>可以把最近的標記一次取消（已存進相簿的照片不會被刪）。</P>
+              <H2 style={{ fontSize: 16 }}>{tr('rv.undoTitle')}</H2>
+              <P muted style={{ fontSize: 13 }}>{tr('rv.undoBody')}</P>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                <Btn small kind="ghost" title="最近 30 分鐘" onPress={() => undo(30)} style={{ flex: 1 }} icon={<Icon name="undo" size={17} />} />
-                <Btn small kind="ghost" title="最近 3 小時" onPress={() => undo(180)} style={{ flex: 1 }} />
+                <Btn small kind="ghost" title={tr('rv.undo30')} onPress={() => undo(30)} style={{ flex: 1 }} icon={<Icon name="undo" size={17} />} />
+                <Btn small kind="ghost" title={tr('rv.undo3h')} onPress={() => undo(180)} style={{ flex: 1 }} />
               </View>
             </Card>
-            <P muted style={{ fontSize: 13, textAlign: labeled.length ? 'left' : 'center' }}>{labeled.length ? '點一下可以改答案。' : '還沒有標記過。到「待確認」點一點吧。'}</P>
+            <P muted style={{ fontSize: 13, textAlign: labeled.length ? 'left' : 'center' }}>{labeled.length ? tr('rv.tapToChange') : tr('rv.noneLabeled')}</P>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {labeled.slice(0, 160).map((l) => (
                 <Pressable key={l.face_id} onPress={async () => {
@@ -267,10 +273,10 @@ export default function Review() {
         <View style={s.foot} pointerEvents="box-none">
           <View style={[cardStyle(t), s.footc]}>
             <Text style={s.cnt}>
-              <Text style={{ color: t.c.yes }}>{nYes} 張是</Text>、<Text style={{ color: t.c.noDeep }}>{nNo} 張不是</Text>、{page.length - nYes - nNo} 張先不選
+              <Text style={{ color: t.c.yes }}>{tr('rv.cntYes', { n: nYes })}</Text>{tr('rv.sep')}<Text style={{ color: t.c.noDeep }}>{tr('rv.cntNo', { n: nNo })}</Text>{tr('rv.sep')}{tr('rv.cntSkip', { n: page.length - nYes - nNo })}
             </Text>
-            <Btn busy={busy} title="儲存這頁，下一頁" onPress={() => commit(page.map((p) => [p.faceId, marksFull[p.faceId] ?? 0]))} />
-            <Btn small kind="ghost" title="這頁全部都不是" onPress={() => commit(page.map((p) => [p.faceId, -1]))} />
+            <Btn busy={busy} title={tr('rv.savePage')} onPress={() => commit(page.map((p) => [p.faceId, marksFull[p.faceId] ?? 0]))} />
+            <Btn small kind="ghost" title={tr('rv.allNo')} onPress={() => commit(page.map((p) => [p.faceId, -1]))} />
           </View>
         </View>
       ) : null}

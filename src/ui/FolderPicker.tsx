@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { tr, useLang } from '../i18n';
 import { candidateFolders, type FolderChoice } from '../services/drive';
 import { Btn, H2, Icon, P } from './kit';
 import { R, useTheme } from './theme';
 
 export function FolderPicker({ visible, onClose, onPick }: { visible: boolean; onClose: () => void; onPick: (f: FolderChoice) => void }) {
   const t = useTheme();
+  useLang();
   const C = { surface: t.c.card2, roseDeep: t.c.noDeep, rose: t.c.accent, line: t.c.line, tan: t.c.tan, ink: t.c.ink, muted: t.c.muted };
   const [list, setList] = useState<FolderChoice[] | null>(null);
   const [err, setErr] = useState('');
@@ -18,8 +20,8 @@ export function FolderPicker({ visible, onClose, onPick }: { visible: boolean; o
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: t.c.overlay, justifyContent: 'flex-end' }}>
         <View style={{ backgroundColor: C.surface, borderTopLeftRadius: R.xl, borderTopRightRadius: R.xl, maxHeight: '80%', padding: 18, gap: 10 }}>
-          <H2>選老師分享的資料夾</H2>
-          <P muted style={{ fontSize: 13 }}>選班級的資料夾就好，裡面的子資料夾都會一起看。</P>
+          <H2>{tr('fp.title')}</H2>
+          <P muted style={{ fontSize: 13 }}>{tr('fp.sub')}</P>
           {err ? <P style={{ color: C.roseDeep }}>{err}</P> : null}
           {!list && !err ? <ActivityIndicator color={C.rose} style={{ margin: 30 }} /> : null}
           <ScrollView>
@@ -32,9 +34,9 @@ export function FolderPicker({ visible, onClose, onPick }: { visible: boolean; o
                 </View>
               </Pressable>
             ))}
-            {list && !list.length ? <P muted>找不到資料夾。請確認老師分享的連結已經用這個 Google 帳號打開過。</P> : null}
+            {list && !list.length ? <P muted>{tr('fp.none')}</P> : null}
           </ScrollView>
-          <Btn kind="ghost" title="取消" onPress={onClose} />
+          <Btn kind="ghost" title={tr('common.cancel')} onPress={onClose} />
         </View>
       </View>
     </Modal>

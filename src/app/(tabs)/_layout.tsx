@@ -10,16 +10,17 @@ import { AccessibilityInfo, Animated, Easing, Pressable, StyleSheet, Text, useWi
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import { isCJK, tr, useLang, type TStrKey } from '../../i18n';
 import { useApp } from '../../services/state';
 import { Backdrop, Icon, InTabs, NightGlow, type IconName } from '../../ui/kit';
 import { useTheme, type Theme } from '../../ui/theme';
 
-const TABS: { name: string; href: string; title: string; icon: IconName }[] = [
-  { name: 'index', href: '/', title: '首頁', icon: 'home' },
-  { name: 'review', href: '/review', title: '確認', icon: 'check' },
-  { name: 'album', href: '/album', title: '相簿', icon: 'album' },
-  { name: 'refs', href: '/refs', title: '參考照片', icon: 'face' },
-  { name: 'settings', href: '/settings', title: '設定', icon: 'gear' },
+const TABS: { name: string; href: string; title: TStrKey; icon: IconName }[] = [
+  { name: 'index', href: '/', title: 'tab.home', icon: 'home' },
+  { name: 'review', href: '/review', title: 'tab.review', icon: 'check' },
+  { name: 'album', href: '/album', title: 'tab.album', icon: 'album' },
+  { name: 'refs', href: '/refs', title: 'tab.refs', icon: 'face' },
+  { name: 'settings', href: '/settings', title: 'tab.settings', icon: 'gear' },
 ];
 const BOOKMARK = [['#F8CFC4', '#E8B0B0'], ['#CFE0B8', '#A3BD9D'], ['#F4D29E', '#E2B07C'], ['#D4E5EE', '#A9C6DC'], ['#E3D4EE', '#BDAED3']];
 
@@ -135,15 +136,18 @@ function TabButton({ tab, i, theme, review }: { tab: (typeof TABS)[number]; i: n
   const on = triggerProps.isFocused;
   const c = theme.c;
   const badge = tab.name === 'review' && review > 0 ? (review > 99 ? '99+' : String(review)) : '';
+  useLang();
+  const title = tr(tab.title);
+  const a11y = badge ? tr('tab.withBadge', { title, n: badge }) : title;
 
   if (theme.id === 'book') {
     const [a, b] = BOOKMARK[i];
     return (
       <Pressable onPress={triggerProps.onPress} onLongPress={triggerProps.onLongPress} style={{ flex: 1 }}
-        accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={tab.title + (badge ? `，${badge} 張待確認` : '')}>
+        accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={a11y}>
         <View style={[st.bm, { height: on ? 68 : 54, backgroundImage: `linear-gradient(180deg, ${a}, ${b})` } as ViewStyle]}>
-          <Text style={st.bmCh}>章節 {i + 1}</Text>
-          <Text style={st.bmTitle} numberOfLines={1} adjustsFontSizeToFit>{tab.title}</Text>
+          <Text style={[st.bmCh, theme.round]} numberOfLines={1} adjustsFontSizeToFit>{tr('tab.chapter', { n: i + 1 })}</Text>
+          <Text style={[st.bmTitle, theme.round, !isCJK() && title.length > 7 && { fontSize: title.length > 9 ? 10 : 11 }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{title}</Text>
         </View>
         {badge ? <View style={[st.badge, { top: -8, right: 4, borderColor: '#C99A70', backgroundColor: c.accent }]}><Text style={st.badgeText}>{badge}</Text></View> : null}
       </Pressable>
@@ -158,11 +162,11 @@ function TabButton({ tab, i, theme, review }: { tab: (typeof TABS)[number]; i: n
           : { backgroundColor: c.accentWash };
   return (
     <Pressable onPress={triggerProps.onPress} onLongPress={triggerProps.onLongPress} style={st.item}
-      accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={tab.title + (badge ? `，${badge} 張待確認` : '')}>
+      accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={a11y}>
       <View style={[st.pill, pill]}>
         <Icon name={tab.icon} size={23} color={theme.id === 'candy' && on ? '#FFFFFF' : color} />
       </View>
-      <Text style={[st.label, theme.round, { color }]} numberOfLines={1}>{tab.title}</Text>
+      <Text style={[st.label, theme.round, { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{title}</Text>
       {badge ? (
         <View style={[st.badge, { borderColor: c.tab === 'transparent' ? c.bg : c.tab, backgroundColor: theme.id === 'candy' ? '#FFC94D' : theme.id === 'minimal' ? '#D2513F' : c.accent }]}>
           <Text style={[st.badgeText, { color: theme.id === 'candy' ? '#5A3C00' : theme.id === 'starry' ? '#2B2008' : '#FFFFFF' }]}>{badge}</Text>
@@ -289,6 +293,6 @@ const st = StyleSheet.create({
     borderWidth: 1, borderTopWidth: 0, borderColor: 'rgba(110,70,50,0.2)', paddingHorizontal: 2,
     boxShadow: 'inset 0px 9px 8px -6px rgba(110,70,50,0.32), 0px 3px 5px rgba(80,50,35,0.22)',
   } as ViewStyle,
-  bmCh: { fontFamily: 'Huninn', fontSize: 10, color: '#5E3F33', opacity: 0.8 },
-  bmTitle: { fontFamily: 'Huninn', fontSize: 13, color: '#5E3F33' },
+  bmCh: { fontSize: 10, color: '#5E3F33', opacity: 0.8 },
+  bmTitle: { fontSize: 13, color: '#5E3F33' },
 });

@@ -13,6 +13,7 @@ type Native = {
   isIgnoringBatteryOptimizations(): boolean;
   openAppSettings(): boolean;
   sleep(ms: number): Promise<void>;
+  setChannel?(name: string, description: string): boolean; // 舊版 App 沒有這個
 };
 
 const native: Native | null = Platform.OS === 'android' ? requireOptionalNativeModule<Native>('KpfForeground') : null;
@@ -50,6 +51,11 @@ export function stop() {
 export function batteryUnrestricted(): boolean {
   if (!native) return true;
   try { return native.isIgnoringBatteryOptimizations(); } catch { return true; }
+}
+
+/** 通知分類的名字和說明（跟著 App 的語言；手機「設定 → 通知」裡看得到） */
+export function setChannel(name: string, description: string) {
+  try { native?.setChannel?.(name, description); } catch {}
 }
 
 /** 打開 App 的系統設定頁，讓家長把電池改成「不限制」 */

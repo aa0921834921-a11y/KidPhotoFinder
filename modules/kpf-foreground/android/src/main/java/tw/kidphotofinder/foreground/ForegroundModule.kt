@@ -1,5 +1,6 @@
 package tw.kidphotofinder.foreground
 
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -55,6 +56,26 @@ class ForegroundModule : Module() {
     AsyncFunction("sleep") { ms: Int, promise: Promise ->
       // 用主執行緒的計時器（App 在背景時也會照常執行），不佔住 Expo 共用的工作執行緒
       Handler(Looper.getMainLooper()).postDelayed({ promise.resolve() }, ms.coerceIn(0, 60_000).toLong())
+    }
+
+    /** 通知分類的名字和說明跟著 App 的語言（已經建立的分類也會改名） */
+    Function("setChannel") { name: String, desc: String ->
+      ScanService.channelName = name
+      ScanService.channelDescription = desc
+      var ok = false
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (nm.getNotificationChannel(ScanService.CHANNEL_ID) != null) {
+          val ch = NotificationChannel(ScanService.CHANNEL_ID, name, NotificationManager.IMPORTANCE_LOW)
+          ch.description = desc
+          ch.setShowBadge(false)
+          nm.createNotificationChannel(ch)
+        }
+        ok = true
+      } catch (e: Exception) {
+        ok = false
+      }
+      ok
     }
 
     Function("stop") {

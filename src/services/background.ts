@@ -6,6 +6,8 @@ import * as BackgroundTask from 'expo-background-task';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
+import * as FG from '../../modules/kpf-foreground';
+import { loadLang, onLangChange, tr } from '../i18n';
 import { getSettings } from './db';
 import { requestStop, runScan } from './scanner';
 
@@ -14,6 +16,8 @@ export const DAILY_TASK = 'kidphoto-daily-scan';
 TaskManager.defineTask(DAILY_TASK, async () => {
   const sub = BackgroundTask.addExpirationListener(() => requestStop(true));
   try {
+    // 背景執行時畫面沒有打開：先讀家長選的語言，通知才會是對的語言
+    await loadLang().catch(() => {});
     const s = await getSettings();
     if (!s.autoDaily || !s.folderId || !s.onboarded) return BackgroundTask.BackgroundTaskResult.Success;
     // iOS 背景時間不固定：留一點時間給「判斷 + 存相簿」
@@ -36,13 +40,19 @@ export async function backgroundAvailable(): Promise<boolean> {
   return (await BackgroundTask.getStatusAsync()) === BackgroundTask.BackgroundTaskStatus.Available;
 }
 
+/** 通知分類的名字（手機「設定 → 通知」裡看得到）跟著 App 的語言 */
+async function localizeChannels() {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync('default', { name: tr('notif.channel'), importance: Notifications.AndroidImportance.DEFAULT });
+  FG.setChannel(tr('notif.fgChannel'), tr('notif.fgChannelDesc'));
+}
+onLangChange(() => { localizeChannels().catch(() => {}); });
+
 export async function setupNotifications() {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false }),
   });
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', { name: '新照片', importance: Notifications.AndroidImportance.DEFAULT });
-  }
+  await localizeChannels();
 }
 
 export async function askNotificationPermission(): Promise<boolean> {

@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { SectionList, StyleSheet, Text, View } from 'react-native';
+import { tr, useLang } from '../../i18n';
 import * as DB from '../../services/db';
 import { useApp } from '../../services/state';
 import { Polaroid } from '../../ui/art';
@@ -22,6 +23,7 @@ function Thumb({ r, size, i }: { r: Row; size: number; i: number }) {
 export default function Album() {
   const t = useTheme();
   const s = useStyles();
+  const lang = useLang();
   const version = useApp((x) => x.version);
   const w = useContentWidth(16);
   const [sections, setSections] = useState<Section[]>([]);
@@ -41,20 +43,21 @@ export default function Album() {
       setTotal(rows.length);
       setSections([...g].map(([folder, list]) => {
         const parts = folder.split('/').filter(Boolean);
+        if (parts[0] === '手機相簿') parts[0] = tr('album.phone'); // LINE 下載的照片（資料庫裡存的是中文的固定名稱）
         const data: Row[][] = [];
         for (let i = 0; i < list.length; i += cols) data.push(list.slice(i, i + cols));
         return { title: parts[parts.length - 1] || folder, sub: parts.slice(0, -1).join(' / '), data, n: list.length };
       }));
     });
-  }, [version, cols]));
+  }, [version, cols, lang]));
 
   return (
-    <Paper cap="成長相簿">
+    <Paper cap={tr('album.cap')}>
       <SectionList
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={<View style={{ marginBottom: 16 }}><HeadCard title="寶貝相簿" sub={`共 ${total} 張，也都在手機「照片」App 的「童年拾光」相簿裡。`} /></View>}
-        ListEmptyComponent={<Empty title="還沒有照片" body="到首頁按「立即找新照片」開始吧。" />}
+        ListHeaderComponent={<View style={{ marginBottom: 16 }}><HeadCard title={tr('album.title')} sub={tr('album.sub', { n: total })} /></View>}
+        ListEmptyComponent={<Empty title={tr('album.emptyTitle')} body={tr('album.emptyBody')} />}
         sections={sections}
         keyExtractor={(row) => row[0].file_id}
         stickySectionHeadersEnabled={false}
@@ -63,7 +66,7 @@ export default function Album() {
             <View style={s.gh}>
               <View style={s.ghRow}>
                 <Text style={s.ghTitle}>{t.id !== 'minimal' ? <Text style={{ color: t.c.accent }}>{t.id === 'starry' ? '✦ ' : '✿ '}</Text> : null}{section.title}</Text>
-                <Text style={s.ghN}>{section.n} 張</Text>
+                <Text style={s.ghN}>{tr('common.photos', { n: section.n })}</Text>
               </View>
               {section.sub ? <Text style={s.ghSub}>📁 {section.sub}</Text> : null}
             </View>

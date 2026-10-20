@@ -9,6 +9,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { AlphaType, ColorType, Skia } from '@shopify/react-native-skia';
 import { Platform } from 'react-native';
 import type { InferenceSession } from 'onnxruntime-react-native';
+import { tr } from '../i18n';
 
 // 辨識引擎用到時才載入：萬一原生模組沒裝好，只會在找照片時出錯，不會讓 App 一打開就閃退。
 type Ort = typeof import('onnxruntime-react-native');
@@ -18,7 +19,7 @@ function ort(): Ort {
     try {
       ortMod = require('onnxruntime-react-native') as Ort;
     } catch (e: any) {
-      throw new Error('辨識引擎載入失敗，請更新 App 後再試。（' + String(e?.message || e) + '）');
+      throw new Error(tr('err.engine', { err: String(e?.message || e) }));
     }
   }
   return ortMod;
@@ -58,7 +59,7 @@ export async function downloadModel(progress?: (p: number) => void, signal?: Abo
   const sha = (await tmp.digest('SHA-256')).toLowerCase();
   if (!W600K_SHA256.includes(sha)) {
     tmp.delete();
-    throw new Error('下載的模型檔案不完整，請換個網路再試一次');
+    throw new Error(tr('err.modelBroken'));
   }
   const dst = w600kFile();
   if (dst.exists) dst.delete();
@@ -78,7 +79,7 @@ async function load() {
     det = await ort().InferenceSession.create(path(a.localUri || a.uri));
   }
   if (!rec) {
-    if (!modelReady()) throw new Error('辨識模型還沒下載');
+    if (!modelReady()) throw new Error(tr('err.modelMissing'));
     // Android 只用 CPU：NNAPI 在很多中低階手機上第一次要先「編譯」模型，反而慢很多（Android 15 起也已停用）
     const providers = Platform.OS === 'ios' ? ['coreml', 'cpu'] : ['cpu'];
     rec = await ort().InferenceSession.create(path(w600kFile().uri), {
@@ -134,11 +135,11 @@ export async function loadImage(uri: string, maxSide = 2048): Promise<BGRImage> 
   const saved = await ref.saveAsync({ format: SaveFormat.JPEG, compress: 0.95 });
   const bytes = await new File(saved.uri).bytes();
   const sk = Skia.Image.MakeImageFromEncoded(Skia.Data.fromBytes(bytes));
-  if (!sk) throw new Error('讀不到這張照片');
+  if (!sk) throw new Error(tr('err.cantRead'));
   const w = sk.width(), h = sk.height();
   const px = sk.readPixels(0, 0, { width: w, height: h, colorType: ColorType.RGBA_8888, alphaType: AlphaType.Unpremul });
   try { new File(saved.uri).delete(); } catch {}
-  if (!px) throw new Error('讀不到這張照片');
+  if (!px) throw new Error(tr('err.cantRead'));
   return rgbaToBGR(px as Uint8Array, w, h);
 }
 

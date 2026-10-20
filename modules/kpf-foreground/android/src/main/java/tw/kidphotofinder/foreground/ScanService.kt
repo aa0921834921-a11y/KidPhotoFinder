@@ -73,13 +73,16 @@ class ScanService : Service() {
 
     @Volatile var running = false
 
+    // 通知分類的名字和說明：App 打開時會依家長選的語言設定（見 ForegroundModule 的 setChannel）
+    @Volatile var channelName = "整理照片的進度"
+    @Volatile var channelDescription = "整理老師的照片時，在通知列顯示進度"
+
     fun ensureChannel(context: Context) {
       val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-        val ch = NotificationChannel(CHANNEL_ID, "整理照片的進度", NotificationManager.IMPORTANCE_LOW).apply {
-          description = "整理老師的照片時，在通知列顯示進度"
-          setShowBadge(false)
-        }
+        val ch = NotificationChannel(CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_LOW)
+        ch.description = channelDescription
+        ch.setShowBadge(false)
         nm.createNotificationChannel(ch)
       }
     }

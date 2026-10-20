@@ -11,6 +11,7 @@ import { File, Paths } from 'expo-file-system';
 import { Album, Asset, AssetField, MediaType, Query, requestPermissionsAsync } from 'expo-media-library';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { buildReferences, decide, THRESHOLDS } from '../core/decide';
+import { tr } from '../i18n';
 import * as DB from './db';
 import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { bump, setState } from './state';
@@ -24,7 +25,7 @@ export type PhoneAlbum = { id: string; title: string; count: number; isLine: boo
 /** 手機裡的相簿（LINE 的排最前面） */
 export async function phoneAlbums(): Promise<PhoneAlbum[]> {
   const p = await requestPermissionsAsync(false, ['photo']);
-  if (!p.granted) throw new Error('需要允許讀取照片，才能整理 LINE 下載的照片');
+  if (!p.granted) throw new Error(tr('err.needReadPerm'));
   const all = await Album.getAll();
   const out: PhoneAlbum[] = [];
   for (const a of all) {
@@ -76,19 +77,19 @@ export async function scanAlbum(albumId: string, since: number): Promise<CleanPl
   cancel = false;
   const albums = await Album.getAll();
   const alb = albums.find((a) => a.id === albumId);
-  if (!alb) throw new Error('找不到這個相簿');
+  if (!alb) throw new Error(tr('err.albumMissing'));
   const title = await alb.getTitle();
-  setState({ running: true, phase: 'list', done: 0, total: 0, found: 0, eta: '', message: `正在看「${title}」…` });
+  setState({ running: true, phase: 'list', done: 0, total: 0, found: 0, eta: '', message: tr('clean.looking', { title }) });
   await activateKeepAwakeAsync('clean').catch(() => {});
   try {
     if (!modelReady()) {
-      setState({ phase: 'model', message: '正在下載辨識模型…' });
+      setState({ phase: 'model', message: tr('scan.downloadingModel') });
       await downloadModel((p) => setState({ modelProgress: p }));
     }
     const meta = await new Query().album(alb).eq(AssetField.MEDIA_TYPE, MediaType.IMAGE).gte(AssetField.CREATION_TIME, since).exeForMetadata();
     const known = await DB.localFileIds();
     const todo = meta.filter((m) => !known.has(LOCAL_PREFIX + m.id));
-    setState({ phase: 'scan', total: todo.length, message: '正在找臉' });
+    setState({ phase: 'scan', total: todo.length, message: tr('scan.finding') });
     let found = 0;
     for (let i = 0; i < todo.length; i++) {
       if (cancel) break;
@@ -108,7 +109,7 @@ export async function scanAlbum(albumId: string, since: number): Promise<CleanPl
     }
 
     // 跟雲端照片一起判斷（家長的「是／不是」也會一起用上）
-    setState({ phase: 'decide', message: '正在判斷…' });
+    setState({ phase: 'decide', message: tr('scan.deciding') });
     const st = await DB.getSettings();
     const [mThr, rThr] = THRESHOLDS[st.strictness] || THRESHOLDS.standard;
     const refs = await DB.listRefs();
@@ -117,7 +118,7 @@ export async function scanAlbum(albumId: string, since: number): Promise<CleanPl
     await DB.saveDecisions(decisions);
 
     // 有孩子的複製到童年拾光相簿
-    setState({ phase: 'save', message: '正在收進相簿…' });
+    setState({ phase: 'save', message: tr('clean.saving') });
     const saved = await DB.savedMap();
     const locals = await DB.localFilesIn(albumId, since);
     let appAlbum = await Album.get(st.albumName);

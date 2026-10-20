@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { isCJK, sp, tr, useLang } from '../../i18n';
 import * as DB from '../../services/db';
 import { NeedSignIn } from '../../services/drive';
 import { interruptedScan, requestStop, runScan } from '../../services/scanner';
@@ -13,8 +14,20 @@ import * as FG from '../../../modules/kpf-foreground';
 import { makeStyles, useTheme, type Theme } from '../../ui/theme';
 import { usePreview } from '../../ui/usePreview';
 
-const greeting = () => { const h = new Date().getHours(); return h < 5 ? '夜深了' : h < 11 ? '早安' : h < 18 ? '午安' : '晚安'; };
-const PHASE: Record<string, string> = { model: '正在下載辨識模型', list: '正在看老師的資料夾', scan: '正在找臉', decide: '正在判斷', save: '正在存進相簿' };
+const greeting = () => {
+  const h = new Date().getHours();
+  return tr(h < 5 ? 'home.greetLate' : h < 11 ? 'home.greetMorning' : h < 18 ? 'home.greetNoon' : 'home.greetEvening');
+};
+const phaseTitle = (p: string) => {
+  switch (p) {
+    case 'model': return tr('phase.model');
+    case 'list': return tr('phase.list');
+    case 'scan': return tr('phase.scan');
+    case 'decide': return tr('phase.decide');
+    case 'save': return tr('phase.save');
+    default: return tr('phase.default');
+  }
+};
 const TILTS = [-2.2, 2, -0.8, 1.6, -1.8, 1.1];
 
 type Recent = { file_id: string; at: string; name: string; folder: string };
@@ -27,9 +40,10 @@ function openPhoto(id: string) { router.push({ pathname: '/viewer', params: { id
 /** 照片牆上的一張 */
 function WallPhoto({ r, size, i }: { r: Recent; size: number; i: number }) {
   const uri = usePreview(r.file_id, 512);
+  useLang();
   return (
     <Polaroid uri={uri} size={size} caption={folderCap(r.folder)} tilt={TILTS[i % TILTS.length]} tape={i % 3}
-      badge={r.at.slice(0, 10) === today() ? '新' : undefined} onPress={() => openPhoto(r.file_id)} />
+      badge={r.at.slice(0, 10) === today() ? tr('home.new') : undefined} onPress={() => openPhoto(r.file_id)} />
   );
 }
 
@@ -42,6 +56,8 @@ function Mount({ r, size, i }: { r: Recent; size: number; i: number }) {
 export default function Home() {
   const t = useTheme();
   const s = useStyles();
+  useLang();
+  const cjk = isCJK();
   const app = useApp((x) => x);
   const w = useContentWidth(16);
   const [recent, setRecent] = useState<Recent[]>([]);
@@ -63,10 +79,11 @@ export default function Home() {
   const start = async (resume = false) => {
     try {
       const r = await runScan('manual', Infinity, { resume });
-      Alert.alert(r.stopped ? '已經停止' : '完成了', r.saved ? `新存了 ${r.saved} 張照片到相簿${r.review ? `，另外 ${r.review} 張等你確認` : ''}。` : r.review ? `有 ${r.review} 張照片等你確認。` : '沒有新照片。');
+      Alert.alert(r.stopped ? tr('home.stoppedTitle') : tr('home.doneTitle'),
+        r.saved ? tr('home.savedMsg', { saved: r.saved, review: r.review }) : r.review ? tr('home.reviewMsg', { n: r.review }) : tr('home.noNew'));
     } catch (e: any) {
-      if (e instanceof NeedSignIn) Alert.alert('需要重新登入', '請到「設定」重新登入 Google 帳號。');
-      else Alert.alert('沒有完成', String(e?.message || e));
+      if (e instanceof NeedSignIn) Alert.alert(tr('home.needSignInTitle'), tr('home.needSignInBody'));
+      else Alert.alert(tr('common.notDone'), String(e?.message || e));
     }
   };
 
@@ -92,23 +109,23 @@ export default function Home() {
   const wc = t.art === 'watercolor';
 
   const stats = [
-    { ic: '▧', n: app.counts.saved, l: '已珍藏的照片' },
-    { ic: '♡', n: app.counts.review, l: '待確認的笑臉' },
-    { ic: '✿', n: app.counts.savedToday, l: '今天的新照片' },
-    { ic: '♧', n: refsOk, l: '可用的參考照片' },
+    { ic: '▧', n: app.counts.saved, l: tr('home.statSaved') },
+    { ic: '♡', n: app.counts.review, l: tr('home.statReview') },
+    { ic: '✿', n: app.counts.savedToday, l: tr('home.statToday') },
+    { ic: '♧', n: refsOk, l: tr('home.statRefs') },
   ];
 
   return (
-    <Paper cap="首頁・封面">
+    <Paper cap={tr('home.cap')}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         {t.id !== 'book' ? (
           <View style={s.brand}>
             <Logo size={40} />
             <View style={{ flex: 1 }}>
               <Text style={s.brandName}>童年拾光</Text>
-              <Text style={s.brandSub}>收藏每一個成長瞬間</Text>
+              <Text style={s.brandSub}>{tr('home.brandSub')}</Text>
             </View>
-            <Pressable style={s.bell} onPress={() => router.push('/logs')} accessibilityLabel="執行紀錄">
+            <Pressable style={s.bell} onPress={() => router.push('/logs')} accessibilityLabel={tr('home.logs')}>
               <Icon name="bell" size={21} />
               {app.counts.savedToday > 0 ? <View style={s.bellDot} /> : null}
             </Pressable>
@@ -120,15 +137,16 @@ export default function Home() {
           <View style={s.eyebrow}>
             <View style={s.eyeLine} />
             <Text style={s.eyeEn}>OUR LITTLE MEMORIES</Text>
-            <Text style={s.eyeZh}>孩子的成長手帳</Text>
+            <Text style={s.eyeZh} numberOfLines={1}>{tr('home.eyebrow')}</Text>
           </View>
-          <View style={s.tag}><Text style={s.tagText}>✦　每一張，都是珍貴的故事　✦</Text></View>
-          <Text style={s.coverH1}>
-            {greeting()}！{'\n'}<Text style={{ color: t.c.coverEm }}>陪你找回</Text>{'\n'}孩子的美好時光<Text style={s.heart}> ♡</Text>
+          <View style={s.tag}><Text style={s.tagText}>✦{sp()}{tr('home.tag')}{sp()}✦</Text></View>
+          <Text style={[s.coverH1, !cjk && s.coverH1Latin]}>
+            {greeting()}{'\n'}<Text style={{ color: t.c.coverEm }}>{tr('home.coverEm')}</Text>{'\n'}{tr('home.coverRest')}<Text style={s.heart}> ♡</Text>
           </Text>
-          <Text style={s.lead}>從老師分享的照片裡，{'\n'}收藏每一個<Text style={{ color: t.c.accentDeep }}>閃閃發光的成長瞬間。</Text></Text>
-          {app.running ? null : <Btn title="✿ 立即找新照片 ↗" onPress={() => start()} style={{ alignSelf: 'flex-start', marginTop: 16 }} />}
-          <Text style={s.cfoot}>✎ {app.running ? '整理中…' : last ? `上次整理 ${fmtTime(last)}` : '還沒有整理過'}　·　{auto ? '每天會自動整理' : '自動整理已關閉'}</Text>
+          <Text style={s.lead}>{tr('home.lead1')}<Text style={{ color: t.c.accentDeep }}>{tr('home.lead2')}</Text></Text>
+          {app.running ? null : <Btn title={tr('home.findNow')} onPress={() => start()} style={{ alignSelf: 'flex-start', marginTop: 16 }} />}
+          {/* 中文一行；其他語言字比較長，分兩行（右邊的手寫小卡才不會蓋住） */}
+          <Text style={s.cfoot}>✎ {app.running ? tr('home.running') : last ? tr('home.lastRun', { time: fmtTime(last) }) : tr('home.never')}{cjk ? `${sp()}·${sp()}` : '\n'}{auto ? tr('home.autoOn') : tr('home.autoOff')}</Text>
           <CoverArt uri={latest} width={w} onPhoto={recent[0] ? () => openPhoto(recent[0].file_id) : undefined} />
         </View>
 
@@ -138,20 +156,20 @@ export default function Home() {
             {wc ? <Text style={s.jobFlower}>✿</Text> : null}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <Icon name="camera" color={t.c.accent} />
-              <H2 style={{ flex: 1, fontSize: 18 }}>{PHASE[app.phase] || '整理中'}</H2>
+              <H2 style={{ flex: 1, fontSize: 18 }}>{phaseTitle(app.phase)}</H2>
               {app.phase === 'scan' || app.phase === 'list'
-                ? <Btn small kind="ghost" title={app.stopping ? '停止中…' : '停止'} disabled={app.stopping} onPress={() => requestStop()} /> : null}
+                ? <Btn small kind="ghost" title={app.stopping ? tr('common.stopping') : tr('common.stop')} disabled={app.stopping} onPress={() => requestStop()} /> : null}
             </View>
             <View style={{ marginTop: 12 }}>
               <Bar value={app.phase === 'model' ? app.modelProgress : app.total ? app.done / app.total : 0} indeterminate={app.phase !== 'scan' && app.phase !== 'model'} />
             </View>
             <P muted style={{ marginTop: 8, fontSize: 13 }}>
-              {app.stopping ? app.message : app.phase === 'scan' && app.total ? `${app.done} / ${app.total}　有臉的照片 ${app.found} 張　${app.eta}` : app.phase === 'model' ? `${Math.round(app.modelProgress * 100)}%` : app.message}
+              {app.stopping ? app.message : app.phase === 'scan' && app.total ? tr('home.progress', { done: app.done, total: app.total, found: app.found, eta: app.eta }) : app.phase === 'model' ? `${Math.round(app.modelProgress * 100)}%` : app.message}
             </P>
-            <P muted style={{ fontSize: 12 }}>{Platform.OS === 'android' ? '可以關掉螢幕或切到別的 App，通知列會顯示進度；第一次會比較久，建議接上充電。' : '可以切到別的 App，回來會繼續；第一次會比較久。'}</P>
+            <P muted style={{ fontSize: 12 }}>{Platform.OS === 'android' ? tr('home.hintAndroid') : tr('home.hintIos')}</P>
             {Platform.OS === 'android' && !FG.batteryUnrestricted() ? (
-              <Link title="整理常常停住？把電池設成「不限制」 ›" onPress={() => Alert.alert('讓整理不會被中斷', '有些手機的省電功能會把背景工作關掉。\n\n等一下會打開童年拾光的設定頁：點「電池」→ 選「不限制」（或關掉「電池最佳化」）。', [
-                { text: '取消', style: 'cancel' }, { text: '打開設定', onPress: () => FG.openAppSettings() },
+              <Link title={tr('home.batteryLink')} onPress={() => Alert.alert(tr('home.batteryTitle'), tr('home.batteryBody'), [
+                { text: tr('common.cancel'), style: 'cancel' }, { text: tr('home.openSettings'), onPress: () => FG.openAppSettings() },
               ])} style={{ marginTop: 6, fontSize: 12.5 }} />
             ) : null}
           </View>
@@ -166,7 +184,7 @@ export default function Home() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.nm}>{x.n}</Text>
-                <Text style={s.lb} numberOfLines={1} adjustsFontSizeToFit>{x.l}</Text>
+                <Text style={s.lb} numberOfLines={cjk ? 1 : 2} adjustsFontSizeToFit>{x.l}</Text>
               </View>
             </View>
           ))}
@@ -186,20 +204,20 @@ export default function Home() {
               {faces.map((f, i) => <FaceCard key={f} faceId={f} size={38} round style={[s.face, i ? { marginLeft: -11 } : null]} />)}
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={s.coTitle}>有 {app.counts.review} 張小小笑臉{'\n'}等你來認認看 ♡</Text>
-              <Text style={s.coSub}>小幫手還不太確定，請幫忙看看是不是家裡的寶貝。</Text>
-              <View style={s.coGo}><Text style={s.coGoText}>一起確認 →</Text></View>
+              <Text style={s.coTitle}>{tr('home.reviewTitle', { n: app.counts.review })}</Text>
+              <Text style={s.coSub}>{tr('home.reviewSub')}</Text>
+              <View style={s.coGo}><Text style={s.coGoText}>{tr('home.reviewGo')}</Text></View>
             </View>
           </Pressable>
         ) : null}
 
         {/* 整理 LINE 照片 */}
         <Pressable onPress={() => router.push('/clean')} style={({ pressed }) => [cardStyle(t), s.line, pressed && { transform: [{ scale: 0.99 }] }]}
-          accessibilityRole="button" accessibilityLabel="整理 LINE 照片">
+          accessibilityRole="button" accessibilityLabel={tr('home.lineTitle')}>
           <View style={s.lineIc}><Text style={s.lineIcText}>LINE</Text></View>
           <View style={{ flex: 1 }}>
-            <Text style={s.coTitle}>整理 LINE 相簿</Text>
-            <Text style={s.coSub}>下載到手機後，一鍵留下有孩子的照片，其他的確認後刪除。</Text>
+            <Text style={s.coTitle}>{tr('home.lineTitle')}</Text>
+            <Text style={s.coSub}>{tr('home.lineSub')}</Text>
           </View>
           <Text style={s.coGoText}>›</Text>
         </Pressable>
@@ -208,8 +226,8 @@ export default function Home() {
         {featured.length ? (
           <View style={{ gap: 10 }}>
             <Text style={s.ov}>CHAPTER 01 · LITTLE STORIES</Text>
-            <Text style={s.chapTitle}>最近的成長故事</Text>
-            <P muted style={{ marginTop: -4 }}>每一張普通的照片，都有一個獨一無二的童年時刻。</P>
+            <Text style={s.chapTitle}>{tr('home.chapTitle')}</Text>
+            <P muted style={{ marginTop: -4 }}>{tr('home.chapSub')}</P>
             <View style={s.sbook}>
               {t.id === 'watercolor' || t.id === 'book' ? <View pointerEvents="none" style={s.spine} /> : null}
               <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
@@ -217,7 +235,7 @@ export default function Home() {
               </View>
               <View style={s.note}>
                 {t.id !== 'minimal' ? <Text style={{ color: '#D9AB70', fontSize: 17 }}>✿</Text> : null}
-                <Text style={s.noteText}>把這些可愛的日常，留給未來的你。</Text>
+                <Text style={s.noteText}>{tr('home.note')}</Text>
                 {t.id !== 'minimal' ? <Text style={{ color: '#D9AB70', fontSize: 15 }}>✧</Text> : null}
               </View>
             </View>
@@ -226,21 +244,21 @@ export default function Home() {
 
         {/* 照片牆 */}
         <View style={s.sheet}>
-          <Ribbon>{anyToday ? '今天收藏的小小時光' : '最近收藏的小小時光'}</Ribbon>
-          <Text style={s.sheetSub}>一張一張收藏，慢慢長成專屬於你們的回憶。</Text>
+          <Ribbon>{anyToday ? tr('home.ribbonToday') : tr('home.ribbonRecent')}</Ribbon>
+          <Text style={s.sheetSub}>{tr('home.sheetSub')}</Text>
           {recent.length ? (
             <>
               <View style={[s.wall, { gap: wallGap, rowGap: t.tilt ? 18 : 8 }]}>
                 {recent.slice(0, 6).map((r, i) => <WallPhoto key={r.file_id} r={r} i={i} size={wallW} />)}
               </View>
               <View style={{ alignItems: 'center', marginTop: 18, zIndex: 2 }}>
-                <Btn small kind="ghost" title="打開完整相簿 →" onPress={() => router.navigate('/album')} />
+                <Btn small kind="ghost" title={tr('home.openAlbum')} onPress={() => router.navigate('/album')} />
               </View>
             </>
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 10, gap: 8 }}>
               <Logo size={54} />
-              <P muted style={{ textAlign: 'center' }}>按「立即找新照片」，找到的照片會一張一張貼在這裡，也會存進手機相簿。</P>
+              <P muted style={{ textAlign: 'center' }}>{tr('home.wallEmpty')}</P>
             </View>
           )}
           {wc ? <Image source={art.blooms} style={s.corner} contentFit="contain" /> : null}
@@ -250,7 +268,7 @@ export default function Home() {
         <View style={s.endq}>
           <DashLine style={{ position: 'absolute', top: 0, left: 0, right: 0 }} />
           {wc ? <Image source={art.children} style={{ width: 230, height: 66 }} contentFit="contain" /> : null}
-          <Text style={s.endText}>那些平凡的小小日常，{'\n'}就是最值得珍藏的大大幸福 <Text style={{ color: t.c.accent }}>♡</Text></Text>
+          <Text style={s.endText}>{tr('home.end')} <Text style={{ color: t.c.accent }}>♡</Text></Text>
         </View>
       </ScrollView>
     </Paper>
@@ -288,6 +306,7 @@ const useStyles = makeStyles((t: Theme) => {
     },
     tagText: { ...t.round, fontSize: 13, color: c.tagText },
     coverH1: { ...t.title, marginTop: 12, fontSize: 30, lineHeight: 42, color: c.coverTitle, letterSpacing: 1 },
+    coverH1Latin: { fontSize: 25, lineHeight: 34, letterSpacing: 0.2 },
     heart: { fontFamily: t.num.fontFamily, fontWeight: '400', color: c.heart },
     lead: { ...t.round, marginTop: 8, fontSize: 14.5, lineHeight: 26, color: c.lead },
     cfoot: { ...t.round, marginTop: 12, fontSize: 11.5, color: c.muted },
@@ -350,7 +369,7 @@ const useStyles = makeStyles((t: Theme) => {
     } as ViewStyle,
     spine: { position: 'absolute', top: 0, bottom: 0, left: '50%', width: 8, marginLeft: -4, backgroundImage: 'linear-gradient(90deg, rgba(187,148,115,0), rgba(187,148,115,0.35), rgba(255,252,228,0.5), rgba(187,148,115,0))' } as ViewStyle,
     note: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16 },
-    noteText: { ...t.round, fontSize: 13.5, color: t.id === 'starry' ? c.ink2 : t.id === 'minimal' ? c.muted : '#896C5F' },
+    noteText: { ...t.round, fontSize: 13.5, color: t.id === 'starry' ? c.ink2 : t.id === 'minimal' ? c.muted : '#896C5F', flexShrink: 1, textAlign: 'center' },
 
     sheet: {
       paddingTop: 20, paddingHorizontal: 14, paddingBottom: 24, overflow: 'visible',

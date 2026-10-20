@@ -4,6 +4,7 @@
  */
 import { useSyncExternalStore } from 'react';
 import { Platform, type TextStyle } from 'react-native';
+import { getLang, onLangChange } from '../i18n';
 import { getMeta, setMeta } from '../services/db';
 
 export type ThemeId = 'watercolor' | 'minimal' | 'starry' | 'candy' | 'book';
@@ -52,6 +53,11 @@ export type Theme = {
 
 const HUNINN = 'Huninn';
 const SERIF = Platform.select({ ios: 'Georgia', default: 'serif' });
+/** 手機內建的字（粉圓體沒有簡體字，簡體中文改用這個，才不會一句話裡混兩種字） */
+export const SYSTEM_FONT = Platform.select({
+  ios: 'System', android: 'sans-serif',
+  default: 'system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif',
+});
 
 const watercolor: Theme = {
   id: 'watercolor', name: '水彩手帳', desc: '溫暖水彩、拍立得', dark: false,
@@ -156,14 +162,31 @@ export const THEME_ORDER: ThemeId[] = ['watercolor', 'minimal', 'starry', 'candy
 let current: ThemeId = 'watercolor';
 const listeners = new Set<() => void>();
 
-export const getTheme = () => THEMES[current];
+/** 簡體中文：把粉圓體換成手機內建的字（同一個主題只做一次） */
+const sysVariants = new Map<ThemeId, Theme>();
+function forLang(base: Theme): Theme {
+  if (getLang() !== 'zh-Hans') return base;
+  let v = sysVariants.get(base.id);
+  if (!v) {
+    const fix = (s: TextStyle, weight?: TextStyle['fontWeight']): TextStyle =>
+      s.fontFamily === HUNINN ? { ...s, fontFamily: SYSTEM_FONT, ...(weight ? { fontWeight: weight } : null) } : s;
+    v = { ...base, round: fix(base.round), title: fix(base.title, '600') };
+    sysVariants.set(base.id, v);
+  }
+  return v;
+}
+
+export const getTheme = () => forLang(THEMES[current]);
 
 export function useTheme(): Theme {
   return useSyncExternalStore(
     (l) => { listeners.add(l); return () => listeners.delete(l); },
-    () => THEMES[current],
+    () => forLang(THEMES[current]),
   );
 }
+
+// 換語言時字型可能跟著換，讓畫面重新排版
+onLangChange(() => listeners.forEach((l) => l()));
 
 export function setTheme(id: ThemeId) {
   if (!THEMES[id] || id === current) return;
@@ -178,13 +201,13 @@ export async function loadTheme() {
   if (v && THEMES[v]) current = v;
 }
 
-/** 依主題產生樣式；同一個主題只算一次 */
+/** 依主題產生樣式；同一個主題（和字型）只算一次 */
 export function makeStyles<T>(fn: (t: Theme) => T): () => T {
-  const cache = new Map<ThemeId, T>();
+  const cache = new Map<Theme, T>();
   return () => {
     const t = useTheme();
-    let v = cache.get(t.id);
-    if (!v) { v = fn(t); cache.set(t.id, v); }
+    let v = cache.get(t);
+    if (!v) { v = fn(t); cache.set(t, v); }
     return v;
   };
 }

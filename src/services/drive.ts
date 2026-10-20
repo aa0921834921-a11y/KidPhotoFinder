@@ -6,6 +6,7 @@ import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import * as FG from '../../modules/kpf-foreground';
+import { tr } from '../i18n';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 const API = 'https://www.googleapis.com/drive/v3';
@@ -89,7 +90,7 @@ async function dropToken(bad: string) {
 }
 
 export class NeedSignIn extends Error {
-  constructor() { super('請重新登入 Google 帳號'); }
+  constructor() { super(tr('err.signInAgain')); }
 }
 
 async function api<T>(path: string, params: Record<string, string> = {}): Promise<T> {
@@ -102,7 +103,7 @@ async function api<T>(path: string, params: Record<string, string> = {}): Promis
     // 背景時 setTimeout 會暫停，改用原生的等待
     if ((r.status === 429 || r.status >= 500) && attempt < 4) { await FG.sleep(800 * 2 ** attempt); continue; }
     if (r.status === 401) throw new NeedSignIn();
-    throw new Error(`Google 雲端硬碟回應錯誤（${r.status}）`);
+    throw new Error(tr('err.drive', { status: r.status }));
   }
 }
 
@@ -139,7 +140,7 @@ export async function candidateFolders(): Promise<FolderChoice[]> {
     return null;
   };
   const seen = new Set<string>(), out: FolderChoice[] = [];
-  for (const [list, where] of [[shared, '與我共用'], [mine, '我的雲端硬碟']] as const) {
+  for (const [list, where] of [[shared, tr('fp.shared')], [mine, tr('fp.mine')]] as const) {
     for (const x of list) {
       const c = pick(x, where);
       if (c && !seen.has(c.id)) { seen.add(c.id); out.push(c); }
@@ -230,7 +231,7 @@ export async function fetchForScan(f: { id: string; name: string; thumb?: string
     try { return (await download(big, dst, true)).uri; } catch {}
     try { return (await download(big, dst, false)).uri; } catch {}
   }
-  if (f.kind !== 'image') throw new Error('沒有縮圖');
+  if (f.kind !== 'image') throw new Error(tr('err.noThumb'));
   return downloadOriginal(f.id, f.name);
 }
 

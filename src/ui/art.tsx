@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Circle, Ellipse, G, Path, Rect } from 'react-native-svg';
+import { tr, useLang } from '../i18n';
 import { art, Tape } from './kit';
 import { useTheme } from './theme';
 
@@ -37,6 +38,7 @@ export function Polaroid({ uri, size, caption, tilt = 0, tape = 0, onPress, styl
   style?: StyleProp<ViewStyle>; badge?: string; ratio?: number; video?: boolean; label?: string;
 }) {
   const t = useTheme();
+  useLang();
   const plain = t.id === 'minimal' || t.id === 'starry';
   const candy = t.id === 'candy';
   const showCap = !!caption && t.captions;
@@ -60,7 +62,7 @@ export function Polaroid({ uri, size, caption, tilt = 0, tape = 0, onPress, styl
   );
   if (!onPress) return body;
   return (
-    <Pressable onPress={onPress} accessibilityRole="imagebutton" accessibilityLabel={label || '看大張'}
+    <Pressable onPress={onPress} accessibilityRole="imagebutton" accessibilityLabel={label || tr('art.view')}
       style={({ pressed }) => pressed ? { transform: [{ scale: 0.97 }] } : null}>
       {body}
     </Pressable>
@@ -107,14 +109,15 @@ function Twinkle({ style, delay = 0, size = 14, color = '#FFE9B0' }: { style: Vi
 /** 封面下半部的插圖；照片按一下可以看大張 */
 export function CoverArt({ uri, onPhoto, width }: { uri: string | null; onPhoto?: () => void; width: number }) {
   const t = useTheme();
+  useLang();
   if (t.art === 'minimal') {
     return (
-      <Pressable onPress={onPhoto} disabled={!uri} style={{ marginTop: 16 }} accessibilityLabel="看最新的照片">
+      <Pressable onPress={onPhoto} disabled={!uri} style={{ marginTop: 16 }} accessibilityLabel={tr('art.viewLatest')}>
         <View style={{ width: '100%', aspectRatio: 1.6, borderRadius: 16, overflow: 'hidden', backgroundColor: t.c.accentWash }}>
           {uri ? <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} /> : (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Logo size={64} /></View>
           )}
-          <View style={st.minCap}><Text style={{ fontSize: 12, color: t.c.ink }}>笑容收集計畫 ♡</Text></View>
+          <View style={st.minCap}><Text style={{ fontSize: 12, color: t.c.ink }}>{tr('art.smile')}</Text></View>
         </View>
       </Pressable>
     );
@@ -122,7 +125,7 @@ export function CoverArt({ uri, onPhoto, width }: { uri: string | null; onPhoto?
 
   const polW = 142;
   const pola = (
-    <Pressable onPress={onPhoto} disabled={!uri} accessibilityLabel="看最新的照片"
+    <Pressable onPress={onPhoto} disabled={!uri} accessibilityLabel={tr('art.viewLatest')}
       style={[st.pola, t.art === 'candy' ? st.polaCandy : null, t.art === 'starry' ? st.polaStar : null, { backgroundColor: t.c.pol }]}>
       {t.art === 'watercolor' ? <Tape i={0} /> : null}
       {t.art === 'candy' ? <Tape i={0} /> : null}
@@ -131,7 +134,7 @@ export function CoverArt({ uri, onPhoto, width }: { uri: string | null; onPhoto?
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Logo size={56} /></View>
         )}
       </View>
-      {t.art !== 'candy' ? <Text style={[st.polaCap, t.round, { color: t.c.polCap }]}>笑容收集計畫 ♡</Text> : null}
+      {t.art !== 'candy' ? <Text style={[st.polaCap, t.round, { color: t.c.polCap }]} numberOfLines={1} adjustsFontSizeToFit>{tr('art.smile')}</Text> : null}
     </Pressable>
   );
 
@@ -205,16 +208,16 @@ export function CoverArt({ uri, onPhoto, width }: { uri: string | null; onPhoto?
 
       {pola}
 
-      {t.art === 'watercolor' ? <Text style={[st.hand, t.round]}>每一個微笑{'\n'}都值得珍藏 ♡</Text> : null}
-      {t.art === 'starry' ? <Text style={[st.hand2, t.round]}>今天也辛苦了{'\n'}晚安，好夢 ☾</Text> : null}
-      {t.art === 'candy' ? <Text style={[st.hand3, t.round]}>今天也超可愛 ★</Text> : null}
+      {t.art === 'watercolor' ? <Text style={[st.hand, t.round]}>{tr('art.handWc')}</Text> : null}
+      {t.art === 'starry' ? <Text style={[st.hand2, t.round]}>{tr('art.handStar')}</Text> : null}
+      {t.art === 'candy' ? <Text style={[st.hand3, t.round]}>{tr('art.handCandy')}</Text> : null}
     </View>
   );
 }
 
 const st = StyleSheet.create({
   polCap: { position: 'absolute', left: 2, right: 2, bottom: 3, textAlign: 'center', fontSize: 10.5 },
-  badge: { position: 'absolute', right: -7, top: -7, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', boxShadow: '0px 2px 4px rgba(0,0,0,0.15)' } as ViewStyle,
+  badge: { position: 'absolute', right: -7, top: -7, minWidth: 22, height: 22, paddingHorizontal: 5, borderRadius: 11, alignItems: 'center', justifyContent: 'center', boxShadow: '0px 2px 4px rgba(0,0,0,0.15)' } as ViewStyle,
   badgeText: { fontSize: 12 },
   video: { position: 'absolute', right: 5, bottom: 3, color: '#fff', fontSize: 14, textShadowColor: '#0008', textShadowRadius: 3 },
   minCap: { position: 'absolute', left: 12, bottom: 12, backgroundColor: 'rgba(255,255,255,0.92)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
@@ -232,7 +235,7 @@ const st = StyleSheet.create({
   } as ViewStyle,
   polaCandy: { padding: 7, paddingBottom: 7, borderRadius: 22, transform: [{ rotate: '-4deg' }], boxShadow: '0px 6px 0px #F4CDE0, 0px 0px 0px 2px #F3D6E6' } as ViewStyle,
   polaStar: { boxShadow: '0px 0px 0px 1px rgba(255,255,255,0.4), 0px 0px 34px rgba(255,217,130,0.28), 0px 16px 26px rgba(0,0,0,0.4)' } as ViewStyle,
-  polaCap: { position: 'absolute', left: 0, right: 0, bottom: 7, textAlign: 'center', fontSize: 12.5 },
+  polaCap: { position: 'absolute', left: 4, right: 4, bottom: 7, textAlign: 'center', fontSize: 12.5 },
   hand: {
     position: 'absolute', right: 2, top: -6, zIndex: 4, fontSize: 12.5, lineHeight: 19, color: '#9C7566', backgroundColor: 'rgba(255,246,227,0.92)',
     paddingVertical: 6, paddingHorizontal: 10, borderRadius: 7, overflow: 'hidden', transform: [{ rotate: '8deg' }], boxShadow: '0px 3px 8px rgba(120,80,60,0.12)',

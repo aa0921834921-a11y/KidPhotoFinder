@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { LANGS, setLang, tr, useLang, type TStrKey } from '../../i18n';
 import { askNotificationPermission, backgroundAvailable, syncSchedule } from '../../services/background';
 import * as DB from '../../services/db';
 import { clearScanCache, restore, signIn, signOut, type Account } from '../../services/drive';
@@ -8,7 +9,7 @@ import { refreshCounts, scheduleApply } from '../../services/scanner';
 import { bump } from '../../services/state';
 import { FolderPicker } from '../../ui/FolderPicker';
 import { Btn, cardStyle, DashLine, HeadCard, Icon, P, Paper, SectionTitle, Toggle, useContentWidth, type IconName } from '../../ui/kit';
-import { makeStyles, setTheme, THEME_ORDER, THEMES, useTheme, type Theme, type ThemeId } from '../../ui/theme';
+import { makeStyles, setTheme, SYSTEM_FONT, THEME_ORDER, useTheme, type Theme, type ThemeId } from '../../ui/theme';
 
 /* ---------------------------------------------------------------- 主題的小預覽圖 */
 
@@ -41,11 +42,13 @@ const MOCK: Record<ThemeId, { bg: ViewStyle; head: ViewStyle; ink: string; acc: 
 
 function ThemeTile({ id, on, onPress, width }: { id: ThemeId; on: boolean; onPress: () => void; width: number }) {
   const s = useStyles();
+  useLang();
   const m = MOCK[id];
-  const th = THEMES[id];
+  const name = tr(`theme.${id}`);
+  const desc = tr(`theme.${id}.desc`);
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [s.tc, { width }, on && s.tcOn, pressed && { transform: [{ scale: 0.98 }] }]}
-      accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={`${th.name}，${th.desc}`}>
+      accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={`${name}, ${desc}`}>
       <View style={[s.mock, m.bg]}>
         <View style={[s.mh, m.head]}>
           <View style={[s.mhLine, { backgroundColor: m.ink }]} />
@@ -55,9 +58,9 @@ function ThemeTile({ id, on, onPress, width }: { id: ThemeId; on: boolean; onPre
           {m.tiles.map((x, i) => <View key={i} style={[s.mpTile, x]} />)}
         </View>
       </View>
-      <Text style={s.tcName}>{th.name}</Text>
-      <Text style={s.tcDesc}>{th.desc}</Text>
-      {on ? <View style={s.badge}><Text style={s.badgeText}>使用中</Text></View> : null}
+      <Text style={s.tcName}>{name}</Text>
+      <Text style={s.tcDesc}>{desc}</Text>
+      {on ? <View style={s.badge}><Text style={s.badgeText}>{tr('set.inUse')}</Text></View> : null}
     </Pressable>
   );
 }
@@ -84,13 +87,40 @@ function Row({ icon, title, sub, children, onPress, first }: { icon: IconName | 
   );
 }
 
-const STRICT: { k: DB.Settings['strictness']; t: string; d: string }[] = [
-  { k: 'loose', t: '寬鬆', d: '盡量不漏' }, { k: 'standard', t: '標準', d: '建議' }, { k: 'strict', t: '嚴格', d: '只存很確定的' },
+const STRICT: { k: DB.Settings['strictness']; t: TStrKey; d: TStrKey }[] = [
+  { k: 'loose', t: 'set.loose', d: 'set.looseDesc' }, { k: 'standard', t: 'set.standard', d: 'set.standardDesc' }, { k: 'strict', t: 'set.strict', d: 'set.strictDesc' },
 ];
+
+/** 語言：每個語言用它自己的文字寫（萬一選到看不懂的語言，也找得回來） */
+function LanguageCard() {
+  const t = useTheme();
+  const s = useStyles();
+  const lang = useLang();
+  return (
+    <View style={[cardStyle(t), s.card, { paddingBottom: 14 }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <SectionTitle style={{ marginBottom: 0, flex: 1 }}>{tr('lang.section')}</SectionTitle>
+        <Icon name="globe" size={20} color={t.c.accentDeep} />
+      </View>
+      <View style={s.langs}>
+        {LANGS.map((l) => {
+          const on = l.k === lang;
+          return (
+            <Pressable key={l.k} onPress={() => setLang(l.k)} style={({ pressed }) => [s.langBtn, on && s.langOn, pressed && { opacity: 0.7 }]}
+              accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={l.name}>
+              <Text style={[s.langName, on && { color: t.c.accentDeep }]}>{on ? '✓ ' : ''}{l.name}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
 
 export default function Settings() {
   const t = useTheme();
   const s = useStyles();
+  useLang();
   const w = useContentWidth(16);
   const tileW = Math.floor((w - 32 - 2 * t.border - 10) / 2);
   const [st, setSt] = useState<DB.Settings | null>(null);
@@ -98,79 +128,81 @@ export default function Settings() {
   const [pick, setPick] = useState(false);
   const [bg, setBg] = useState(true);
   useEffect(() => { DB.getSettings().then(setSt); restore().then(setAcct); backgroundAvailable().then(setBg); }, []);
-  if (!st) return <Paper cap="小幫手設定"><View /></Paper>;
+  if (!st) return <Paper cap={tr('set.cap')}><View /></Paper>;
   const save = async (p: Partial<DB.Settings>) => setSt(await DB.saveSettings(p));
   const card = [cardStyle(t), s.card];
 
   return (
-    <Paper cap="小幫手設定">
+    <Paper cap={tr('set.cap')}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-        <HeadCard title="我的貼心小幫手" sub="換個喜歡的樣子，調整找照片的方式。" />
+        <HeadCard title={tr('set.title')} sub={tr('set.sub')} />
+
+        <LanguageCard />
 
         <View style={card}>
-          <SectionTitle>主題</SectionTitle>
-          <P muted style={{ fontSize: 12.5, marginBottom: 10 }}>點一下馬上換，App 會記住。{t.id === 'book' ? '換分頁或在頁面上左右滑，就會翻頁。' : ''}</P>
+          <SectionTitle>{tr('set.theme')}</SectionTitle>
+          <P muted style={{ fontSize: 12.5, marginBottom: 10 }}>{tr('set.themeNote')}{t.id === 'book' ? tr('set.themeNoteBook') : ''}</P>
           <View style={s.tgrid}>
             {THEME_ORDER.map((id) => <ThemeTile key={id} id={id} width={tileW} on={t.id === id} onPress={() => setTheme(id)} />)}
           </View>
         </View>
 
         <View style={card}>
-          <SectionTitle>Google 帳號與資料夾</SectionTitle>
-          <Row first icon="user" title={acct ? acct.email : '還沒登入'} sub={acct ? '只會讀取，不會修改老師的檔案' : '登入後才能看老師分享的照片'}>
-            <Btn small kind="ghost" title={acct ? '登出' : '登入'} onPress={async () => {
-              if (acct) { await signOut(); setAcct(null); } else setAcct(await signIn().catch((e) => { Alert.alert('登入失敗', String(e?.message || e)); return null; }));
+          <SectionTitle>{tr('set.account')}</SectionTitle>
+          <Row first icon="user" title={acct ? acct.email : tr('set.notSignedIn')} sub={acct ? tr('set.readOnly') : tr('set.signInFirst')}>
+            <Btn small kind="ghost" title={acct ? tr('set.signOut') : tr('set.signIn')} onPress={async () => {
+              if (acct) { await signOut(); setAcct(null); } else setAcct(await signIn().catch((e) => { Alert.alert(tr('common.signInFailed'), String(e?.message || e)); return null; }));
             }} />
           </Row>
-          <Row icon="folder" title="老師的資料夾" sub={st.folderName || '還沒選'} onPress={acct ? () => setPick(true) : undefined}>
-            {acct ? <Text style={s.v}>更換 ›</Text> : null}
+          <Row icon="folder" title={tr('set.folder')} sub={st.folderName || tr('set.noFolder')} onPress={acct ? () => setPick(true) : undefined}>
+            {acct ? <Text style={s.v}>{tr('common.change')} ›</Text> : null}
           </Row>
         </View>
 
         <View style={card}>
-          <SectionTitle>辨識</SectionTitle>
-          <Row first icon="face" title="認人的嚴格程度" sub="不確定的照片都會先放到「待確認」" />
+          <SectionTitle>{tr('set.recog')}</SectionTitle>
+          <Row first icon="face" title={tr('set.strictness')} sub={tr('set.strictnessSub')} />
           <View style={s.lv}>
             {STRICT.map((x) => {
               const on = st.strictness === x.k;
               return (
                 <Pressable key={x.k} style={[s.lvBtn, on && s.lvOn]} accessibilityRole="radio" accessibilityState={{ selected: on }}
                   onPress={async () => { await save({ strictness: x.k }); scheduleApply(); }}>
-                  <Text style={[s.lvName, on && { color: t.c.accentDeep }]}>{x.t}</Text>
-                  <Text style={s.lvDesc}>{x.d}</Text>
+                  <Text style={[s.lvName, on && { color: t.c.accentDeep }]}>{tr(x.t)}</Text>
+                  <Text style={s.lvDesc}>{tr(x.d)}</Text>
                 </Pressable>
               );
             })}
           </View>
-          <Row icon="video" title="也找影片" sub="影片要整個下載，比較花流量和時間">
-            <Toggle value={st.videos} onValueChange={(v) => save({ videos: v })} label="也找影片" />
+          <Row icon="video" title={tr('set.videos')} sub={tr('set.videosSub')}>
+            <Toggle value={st.videos} onValueChange={(v) => save({ videos: v })} label={tr('set.videos')} />
           </Row>
         </View>
 
         <View style={card}>
-          <SectionTitle>自動與通知</SectionTitle>
-          <Row first icon="clock" title="每天自動找新照片" sub={bg ? '手機會挑充電、連 Wi-Fi 的時候在背景執行' : '手機目前不允許背景執行：請到系統設定打開「背景 App 重新整理」'}>
-            <Toggle value={st.autoDaily} label="每天自動找新照片" onValueChange={async (v) => { await save({ autoDaily: v }); await syncSchedule(v); }} />
+          <SectionTitle>{tr('set.auto')}</SectionTitle>
+          <Row first icon="clock" title={tr('set.daily')} sub={bg ? tr('set.dailySub') : tr('set.dailyBlocked')}>
+            <Toggle value={st.autoDaily} label={tr('set.daily')} onValueChange={async (v) => { await save({ autoDaily: v }); await syncSchedule(v); }} />
           </Row>
-          <Row icon="bell" title="有新照片時通知我">
-            <Toggle value={st.notify} label="有新照片時通知我" onValueChange={async (v) => {
-              if (v && !(await askNotificationPermission())) { Alert.alert('通知被關掉了', '請到系統設定允許這個 App 傳送通知。'); return; }
+          <Row icon="bell" title={tr('set.notify')}>
+            <Toggle value={st.notify} label={tr('set.notify')} onValueChange={async (v) => {
+              if (v && !(await askNotificationPermission())) { Alert.alert(tr('set.notifyOffTitle'), tr('set.notifyOffBody')); return; }
               save({ notify: v });
             }} />
           </Row>
-          <Row icon="album" title="整理 LINE 照片" sub="留下有孩子的照片，其他的確認後刪除" onPress={() => router.push('/clean')}><Text style={s.v}>›</Text></Row>
-          <Row icon="list" title="執行紀錄" sub="每次整理找到了什麼" onPress={() => router.push('/logs')}><Text style={s.v}>›</Text></Row>
+          <Row icon="album" title={tr('set.line')} sub={tr('set.lineSub')} onPress={() => router.push('/clean')}><Text style={s.v}>›</Text></Row>
+          <Row icon="list" title={tr('set.logs')} sub={tr('set.logsSub')} onPress={() => router.push('/logs')}><Text style={s.v}>›</Text></Row>
         </View>
 
         <View style={card}>
-          <SectionTitle>其他</SectionTitle>
-          <Row first icon="trash" title="清除暫存縮圖" sub="釋放手機空間，不影響相簿" onPress={() => { clearScanCache(); Alert.alert('清好了'); }} />
-          <Row icon="reset" title="全部重新開始" sub="清掉掃描紀錄和答案（參考照片、相簿裡的照片都會保留）" onPress={() => Alert.alert('確定要重新開始？', '已經存進相簿的照片不會被刪除。', [
-            { text: '取消', style: 'cancel' },
-            { text: '重新開始', style: 'destructive', onPress: async () => { await DB.resetAll(); await refreshCounts(); bump(); } },
+          <SectionTitle>{tr('set.other')}</SectionTitle>
+          <Row first icon="trash" title={tr('set.clearCache')} sub={tr('set.clearCacheSub')} onPress={() => { clearScanCache(); Alert.alert(tr('set.cleared')); }} />
+          <Row icon="reset" title={tr('set.reset')} sub={tr('set.resetSub')} onPress={() => Alert.alert(tr('set.resetTitle'), tr('set.resetBody'), [
+            { text: tr('common.cancel'), style: 'cancel' },
+            { text: tr('set.resetBtn'), style: 'destructive', onPress: async () => { await DB.resetAll(); await refreshCounts(); bump(); } },
           ])} />
         </View>
-        <P muted style={{ fontSize: 12, textAlign: 'center' }}>照片只存在你的手機和你的 Google 帳號裡，不會上傳到其他地方。</P>
+        <P muted style={{ fontSize: 12, textAlign: 'center' }}>{tr('set.privacy')}</P>
       </ScrollView>
       <FolderPicker visible={pick} onClose={() => setPick(false)} onPick={async (f) => {
         setPick(false);
@@ -207,6 +239,10 @@ const useStyles = makeStyles((t: Theme) => {
     lvBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 4, borderRadius: 12, borderWidth: 1.5, borderColor: c.line, backgroundColor: c.card2, alignItems: 'center' },
     lvOn: { backgroundColor: c.accentWash, borderColor: c.accent },
     lvName: { ...t.round, fontSize: 14.5, color: c.ink2 },
-    lvDesc: { ...t.round, fontSize: 10.5, color: c.muted, marginTop: 2 },
+    lvDesc: { ...t.round, fontSize: 10.5, color: c.muted, marginTop: 2, textAlign: 'center' },
+    langs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    langBtn: { paddingVertical: 9, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1.5, borderColor: c.line, backgroundColor: c.card2 },
+    langOn: { backgroundColor: c.accentWash, borderColor: c.accent },
+    langName: { fontFamily: SYSTEM_FONT, fontSize: 14.5, color: c.ink2 },
   });
 });

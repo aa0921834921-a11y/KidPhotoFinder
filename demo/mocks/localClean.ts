@@ -1,5 +1,6 @@
 /* 網頁體驗版：假裝整理 LINE 相簿 */
 import { setState } from '../../src/services/state';
+import { tr } from '../../src/i18n';
 const BASE = process.env.EXPO_PUBLIC_BASE_URL || '';
 export const LOCAL_PREFIX = 'local:';
 export const isLocal = (id: string) => id.startsWith(LOCAL_PREFIX);
@@ -15,9 +16,9 @@ export const stopClean = () => { stop = true; };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function scanAlbum(): Promise<CleanPlan> {
   stop = false;
-  setState({ running: true, phase: 'list', message: '正在看「LINE」…' }); await wait(800);
+  setState({ running: true, phase: 'list', message: tr('clean.looking', { title: 'LINE' }) }); await wait(800);
   for (let i = 0; i <= 36 && !stop; i += 2) { setState({ phase: 'scan', done: i, total: 36, found: Math.floor(i * 0.6) }); await wait(90); }
-  setState({ phase: 'save', message: '正在收進相簿…' }); await wait(900);
+  setState({ phase: 'save', message: tr('clean.saving') }); await wait(900);
   setState({ running: false, phase: 'idle' });
   return { albumTitle: 'LINE', scanned: 36, kept: 9, review: 3, remove: DEMO.map((p, i) => ({ fileId: `${LOCAL_PREFIX}${p}_${i}`, name: `line_${i}.jpg` })) };
 }

@@ -10,6 +10,7 @@ export async function getSettings() { return { ...settings }; }
 export async function saveSettings(x: Partial<Settings>) { settings = { ...settings, ...x }; return { ...settings }; }
 const meta: Record<string, string> = { last_scan: '2026-10-18 08:12:00' };
 if (q.get('theme')) meta.theme = q.get('theme')!;
+if (q.get('lang')) meta.lang = q.get('lang')!; // 預覽用：?lang=en / id / vi / zh-Hans / zh-Hant
 export async function getMeta(k: string) { return meta[k] ?? null; }
 export async function setMeta(k: string, v: string) { meta[k] = v; }
 
@@ -64,7 +65,7 @@ export async function lastRuns() {
   return [
     { finished: '2026-10-18 08:12:00', mode: 'background', scanned: 52, matched: 6, review: 3, saved: 6, errors: 0, note: '' },
     { finished: '2026-10-17 21:40:00', mode: 'background', scanned: 31, matched: 4, review: 2, saved: 4, errors: 0, note: '' },
-    { finished: '2026-10-17 12:05:00', mode: 'manual', scanned: 0, matched: 0, review: 0, saved: 0, errors: 0, note: '沒有新照片' },
+    { finished: '2026-10-17 12:05:00', mode: 'manual', scanned: 12, matched: 0, review: 0, saved: 0, errors: 0, note: 'stopped' },
   ];
 }
 export async function resetAll() {}
