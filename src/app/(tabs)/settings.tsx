@@ -127,6 +127,7 @@ export default function Settings() {
   const [st, setSt] = useState<DB.Settings | null>(null);
   const [acct, setAcct] = useState<Account | null>(null);
   const [pick, setPick] = useState(false);
+  const [replace, setReplace] = useState(false); // 換掉唯一的資料夾（不是再加一個）
   const [bg, setBg] = useState(true);
   useEffect(() => { restore().then(setAcct); backgroundAvailable().then(setBg).catch(() => {}); }, []);
   // 從「新照片通知」頁回來時，重新讀設定
@@ -157,9 +158,23 @@ export default function Settings() {
               if (acct) { await signOut(); setAcct(null); } else setAcct(await signIn().catch((e) => { Alert.alert(tr('common.signInFailed'), String(e?.message || e)); return null; }));
             }} />
           </Row>
-          <Row icon="folder" title={tr('set.folder')} sub={st.folderName || tr('set.noFolder')} onPress={acct ? () => setPick(true) : undefined}>
-            {acct ? <Text style={s.v}>{tr('common.change')} ›</Text> : null}
-          </Row>
+          {/* 老師的資料夾：兄弟姊妹不同班時可以加好幾個 */}
+          {(st.folders.length ? st.folders : [null]).map((f, i) => (
+            <Row key={f?.id || 'none'} icon="folder" title={i ? `${tr('set.folder')} ${i + 1}` : tr('set.folder')} sub={f?.name || tr('set.noFolder')}
+              onPress={acct && !f ? () => setPick(true) : undefined}>
+              {acct && f && st.folders.length > 1 ? (
+                <Pressable hitSlop={8} onPress={() => Alert.alert(tr('set.removeFolderTitle', { name: f.name }), tr('set.removeFolderBody'), [
+                  { text: tr('common.cancel'), style: 'cancel' },
+                  { text: tr('set.removeFolder'), style: 'destructive', onPress: async () => { await save({ folders: st.folders.filter((x) => x.id !== f.id) }); } },
+                ])}><Text style={[s.v, { color: t.c.muted }]}>{tr('set.removeFolder')}</Text></Pressable>
+              ) : acct && f ? (
+                <Pressable hitSlop={8} onPress={() => { setReplace(true); setPick(true); }}><Text style={s.v}>{tr('common.change')} ›</Text></Pressable>
+              ) : null}
+            </Row>
+          ))}
+          {acct && st.folders.length ? (
+            <Row icon="plus" title={tr('set.addFolder')} sub={tr('set.addFolderSub')} onPress={() => { setReplace(false); setPick(true); }}><Text style={s.v}>›</Text></Row>
+          ) : null}
         </View>
 
         <View style={card}>
@@ -207,7 +222,9 @@ export default function Settings() {
       </ScrollView>
       <FolderPicker visible={pick} onClose={() => setPick(false)} onPick={async (f) => {
         setPick(false);
-        await save({ folderId: f.id, folderName: f.name });
+        const cur = st.folders;
+        if (cur.some((x) => x.id === f.id)) return;
+        await save({ folders: replace || !cur.length ? [{ id: f.id, name: f.name }] : [...cur, { id: f.id, name: f.name }] });
         await syncSchedule().catch(() => {});
       }} />
     </Paper>

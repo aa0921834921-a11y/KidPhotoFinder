@@ -39,13 +39,12 @@ function SwitchRow({ title, sub, value, onChange, first }: { title: string; sub?
 }
 
 /** 通知的樣子：用最近存的一張照片做一則假的通知 */
-function Preview({ st, photo }: { st: DB.Settings; photo: DB.PhotoInfo | null }) {
+function Preview({ st, photo, who }: { st: DB.Settings; photo: DB.PhotoInfo | null; who: string }) {
   const s = useStyles();
   const [bad, setBad] = useState(false);
   const local = !bad && photo && Platform.OS === 'android' && photo.asset_id?.startsWith('content://') ? photo.asset_id : null;
   const preview = usePreview(photo && !local ? photo.file_id : null, 768);
   const uri = local || preview;
-  const who = kidName(st);
   const event = photo ? eventName(photo.folder) : tr('nset.sampleEvent');
   const pos = photo?.fx != null && photo.fy != null && photo.fw && photo.fh && photo.w && photo.h
     ? { left: `${Math.round(((photo.fx + photo.fw / 2) / photo.w) * 100)}%`, top: `${Math.round(((photo.fy + photo.fh * 0.6) / photo.h) * 100)}%` }
@@ -79,6 +78,7 @@ export default function NotifySettings() {
   useLang();
   const [st, setSt] = useState<DB.Settings | null>(null);
   const [photo, setPhoto] = useState<DB.PhotoInfo | null>(null);
+  const [kids, setKids] = useState<DB.Kid[]>([]);
   const [name, setName] = useState('');
   const [blocked, setBlocked] = useState(false);
   const [battery, setBattery] = useState(true);
@@ -92,6 +92,7 @@ export default function NotifySettings() {
   }, []);
   useFocusEffect(useCallback(() => {
     DB.getSettings().then((x) => { setSt(x); setName(x.childName || ''); });
+    DB.getKids().then(setKids);
     checkSystem();
   }, [checkSystem]));
   // 從系統設定回來時，重新看通知是不是打開了
@@ -114,7 +115,7 @@ export default function NotifySettings() {
   };
   const saveName = () => { if (name.trim() !== (st.childName || '')) save({ childName: name.trim() }); };
   const { from, to } = dayHours(st);
-  const who = kidName(st);
+  const who = kidName(st, kids);
   const android = Platform.OS === 'android';
 
   return (
@@ -136,7 +137,7 @@ export default function NotifySettings() {
           <Text style={s.label}>{tr('nset.preview')}</Text>
           {st.notify ? (
             <>
-              <Preview st={st} photo={photo} />
+              <Preview st={st} photo={photo} who={who} />
               {st.lockHide ? <Text style={s.note}>{tr('nset.lockNote', { text: tr('ntf.pubTitle', { who, n: 5 }) })}</Text> : null}
             </>
           ) : <Text style={s.note}>{tr('nset.offNote')}</Text>}

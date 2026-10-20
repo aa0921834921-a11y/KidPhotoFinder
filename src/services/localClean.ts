@@ -10,9 +10,9 @@
 import { File, Paths } from 'expo-file-system';
 import { Album, Asset, AssetField, MediaType, Query, requestPermissionsAsync } from 'expo-media-library';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { buildReferences, decide, THRESHOLDS } from '../core/decide';
 import { tr } from '../i18n';
 import * as DB from './db';
+import { judgeAll } from './judge';
 import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { bump, setState } from './state';
 
@@ -111,11 +111,7 @@ export async function scanAlbum(albumId: string, since: number): Promise<CleanPl
     // 跟雲端照片一起判斷（家長的「是／不是」也會一起用上）
     setState({ phase: 'decide', message: tr('scan.deciding') });
     const st = await DB.getSettings();
-    const [mThr, rThr] = THRESHOLDS[st.strictness] || THRESHOLDS.standard;
-    const refs = await DB.listRefs();
-    const { feats } = buildReferences(refs.map((r) => ({ id: r.id, faces: r.faces })));
-    const { decisions } = decide(await DB.loadFaces(), feats, await DB.loadLabels(), mThr, rThr);
-    await DB.saveDecisions(decisions);
+    const decisions = await judgeAll();
 
     // 有孩子的複製到童年拾光相簿
     setState({ phase: 'save', message: tr('clean.saving') });
@@ -135,14 +131,15 @@ export async function scanAlbum(albumId: string, since: number): Promise<CleanPl
     }
 
     // 整理結果
-    const labels = new Map((await DB.loadLabels()).map((l) => [l.faceId, l.label]));
+    const labels = new Map<string, number>();
+    for (const k of await DB.getKids()) for (const l of await DB.loadLabels(k.key)) labels.set(`${l.faceId}|${k.key}`, l.label);
     const savedNow = await DB.savedMap();
     let kept = 0, review = 0;
     const remove: CleanPlan['remove'] = [];
     for (const f of locals) {
       const d = decisions.get(f.id);
       if (d?.kind === 'match' || savedNow.has(f.id)) { kept++; continue; }
-      if (d?.kind === 'review' && labels.get(d.faceId) !== -1) { review++; continue; }
+      if (d?.kind === 'review' && labels.get(`${d.faceId}|${d.person}`) !== -1) { review++; continue; }
       if (f.status === 'bad') continue; // 讀不到的照片不刪
       remove.push({ fileId: f.id, name: f.name });
     }

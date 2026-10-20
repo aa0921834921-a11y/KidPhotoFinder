@@ -35,6 +35,18 @@ export function db(): Promise<SQLite.SQLiteDatabase> {
       await d.execAsync('ALTER TABLE files ADD COLUMN src_album TEXT').catch(() => {});
       // 第一次看到這個檔案的時間：用來分辨「老師剛上傳的」和「以前就有的」照片
       await d.execAsync('ALTER TABLE files ADD COLUMN first_seen TEXT').catch(() => {});
+      // 兄弟姊妹：每張參考照片、每個「是／不是」、每個判斷結果都記住是哪個孩子（第一個孩子是空字串）
+      await d.execAsync("ALTER TABLE refs ADD COLUMN person TEXT DEFAULT ''").catch(() => {});
+      await d.execAsync(`
+        CREATE TABLE IF NOT EXISTS labels2(face_id INTEGER, person TEXT, label INTEGER, emb BLOB, at TEXT, PRIMARY KEY(face_id, person));
+        CREATE TABLE IF NOT EXISTS decisions2(file_id TEXT, person TEXT, kind TEXT, score REAL, face_id INTEGER, PRIMARY KEY(file_id, person));
+        CREATE INDEX IF NOT EXISTS decisions2_kind ON decisions2(kind);`);
+      const moved = await d.getFirstAsync<{ v: string }>("SELECT v FROM meta WHERE k = 'labels_v2'");
+      if (!moved) {
+        await d.execAsync(`INSERT OR IGNORE INTO labels2(face_id, person, label, emb, at) SELECT face_id, '', label, emb, at FROM labels;
+          INSERT OR IGNORE INTO decisions2(file_id, person, kind, score, face_id) SELECT file_id, '', kind, score, face_id FROM decisions;
+          INSERT OR REPLACE INTO meta(k, v) VALUES ('labels_v2', '1');`);
+      }
       return d;
     })();
   }
@@ -58,9 +70,14 @@ export const blobToEmb = (b: Uint8Array) => {
 
 /* ---------------------------------------------------------------- 設定 */
 
+export type Folder = { id: string; name: string };
+
 export type Settings = {
+  /** 第一個資料夾（舊版只有一個；新版請用 folders） */
   folderId: string | null;
   folderName: string | null;
+  /** 老師的資料夾（兄弟姊妹不同班時可以有好幾個） */
+  folders: Folder[];
   strictness: 'loose' | 'standard' | 'strict';
   /** 自動找新照片（在背景定時看老師的資料夾） */
   autoDaily: boolean;
@@ -85,19 +102,31 @@ export type Settings = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  folderId: null, folderName: null, strictness: 'standard', autoDaily: true, videos: false,
+  folderId: null, folderName: null, folders: [], strictness: 'standard', autoDaily: true, videos: false,
   wifiOnly: true, albumName: '童年拾光', notify: true, onboarded: false,
   notifyPhoto: true, lockHide: false, quiet: true, dayFrom: 7, dayTo: 21, freq: 30, childName: '',
 };
 
+/** 老師的資料夾清單（舊版設定只有 folderId） */
+export const foldersOf = (s: Pick<Settings, 'folders' | 'folderId' | 'folderName'>): Folder[] =>
+  s.folders?.length ? s.folders : s.folderId ? [{ id: s.folderId, name: s.folderName || '' }] : [];
+
 export async function getSettings(): Promise<Settings> {
   const d = await db();
   const r = await d.getFirstAsync<{ v: string }>('SELECT v FROM meta WHERE k = ?', 'settings');
-  return { ...DEFAULT_SETTINGS, ...(r ? JSON.parse(r.v) : {}) };
+  const s: Settings = { ...DEFAULT_SETTINGS, ...(r ? JSON.parse(r.v) : {}) };
+  s.folders = foldersOf(s);
+  return s;
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
   const s = { ...(await getSettings()), ...patch };
+  if (patch.folders) { // 第一個資料夾也記在舊的欄位（其他地方用來判斷「設定好了沒」）
+    s.folderId = patch.folders[0]?.id || null;
+    s.folderName = patch.folders[0]?.name || null;
+  } else if (patch.folderId !== undefined) { // 舊的寫法：只換第一個資料夾
+    s.folders = patch.folderId ? [{ id: patch.folderId, name: patch.folderName || '' }, ...s.folders.slice(1).filter((f) => f.id !== patch.folderId)] : s.folders.slice(1);
+  }
   const d = await db();
   await d.runAsync('INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)', 'settings', JSON.stringify(s));
   return s;
@@ -114,6 +143,47 @@ export async function setMeta(k: string, v: string): Promise<void> {
   await d.runAsync('INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)', k, v);
 }
 
+/* ---------------------------------------------------------------- 孩子（兄弟姊妹） */
+
+/** key：第一個孩子是空字串；name：小名（第一個孩子沒取名字時用設定裡的小名或「我的小孩」） */
+export type Kid = { key: string; name: string };
+
+export async function getKids(): Promise<Kid[]> {
+  try {
+    const v = JSON.parse((await getMeta('kids')) || 'null') as Kid[] | null;
+    if (v && v.length) return v;
+  } catch {}
+  return [{ key: '', name: '' }];
+}
+
+export async function saveKids(kids: Kid[]) {
+  await setMeta('kids', JSON.stringify(kids.length ? kids : [{ key: '', name: '' }]));
+}
+
+export async function addKid(name: string): Promise<Kid> {
+  const kids = await getKids();
+  const k = { key: `k${Date.now()}`, name: name.trim().slice(0, 12) };
+  await saveKids([...kids, k]);
+  return k;
+}
+
+export async function renameKid(key: string, name: string) {
+  await saveKids((await getKids()).map((k) => (k.key === key ? { ...k, name: name.trim().slice(0, 12) } : k)));
+}
+
+/** 移除一個孩子：他的參考照片和「是／不是」也一起清掉（已經存進相簿的照片不會刪） */
+export async function removeKid(key: string): Promise<{ id: string; uri: string }[]> {
+  const d = await db();
+  const refs = await d.getAllAsync<{ id: string; uri: string }>('SELECT id, uri FROM refs WHERE person = ?', key);
+  await d.withTransactionAsync(async () => {
+    for (const r of refs) { await d.runAsync('DELETE FROM refs WHERE id = ?', r.id); await d.runAsync('DELETE FROM ref_faces WHERE ref_id = ?', r.id); }
+    await d.runAsync('DELETE FROM labels2 WHERE person = ?', key);
+    await d.runAsync('DELETE FROM decisions2 WHERE person = ?', key);
+  });
+  await saveKids((await getKids()).filter((k) => k.key !== key));
+  return refs;
+}
+
 /* ---------------------------------------------------------------- 照片與臉 */
 
 export type FileRow = {
@@ -123,9 +193,16 @@ export type FileRow = {
   first_seen?: string | null;
 };
 
-export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w' | 'h' | 'first_seen'>[]): Promise<number> {
+/** OLD：「以前就在資料夾裡的照片」的 first_seen（比任何時間都早） */
+export const OLD_SEEN = '0000-00-00 00:00:00';
+/** 老師新上傳的：first_seen 是真正的時間 */
+export const isFresh = (firstSeen: string | null | undefined) => !!firstSeen && firstSeen > '1';
+
+/** old = true：第一次看這個資料夾，看到的都是「以前的照片」（不會一張一張通知） */
+export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w' | 'h' | 'first_seen'>[], old = false): Promise<number> {
   const d = await db();
   const t = now();
+  const seen = old ? OLD_SEEN : t;
   let fresh = 0;
   await d.withTransactionAsync(async () => {
     for (const f of files) {
@@ -134,7 +211,7 @@ export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w
       if (!old) {
         fresh++;
         await d.runAsync('INSERT INTO files(id, name, folder, mime, size, modified, md5, kind, status, seen_at, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-          f.id, f.name, f.folder, f.mime, f.size, f.modified, f.md5, f.kind, 'new', t, t);
+          f.id, f.name, f.folder, f.mime, f.size, f.modified, f.md5, f.kind, 'new', t, seen);
       } else {
         const changed = (f.md5 && old.md5 && f.md5 !== old.md5) || (!f.md5 && f.size !== old.size);
         await d.runAsync('UPDATE files SET name = ?, folder = ?, seen_at = ?' + (changed ? ", status = 'new', md5 = ?, size = ?" : '') + ' WHERE id = ?',
@@ -160,12 +237,11 @@ export async function scanProgress(includeVideos: boolean): Promise<{ all: numbe
  * 還沒看過的照片。freshAfter：這個時間之後才第一次看到的（老師剛上傳的）排在最前面，
  * 以前的照片還沒看完時，新照片也能馬上找到、馬上通知。
  */
-export async function filesToScan(includeVideos: boolean, freshAfter: string | null = null): Promise<FileRow[]> {
+export async function filesToScan(includeVideos: boolean): Promise<FileRow[]> {
   const d = await db();
   const where = `status = 'new' AND id NOT LIKE 'local:%' ${includeVideos ? '' : "AND kind = 'image'"}`;
-  if (!freshAfter) return d.getAllAsync<FileRow>(`SELECT * FROM files WHERE ${where} ORDER BY modified DESC`);
   return d.getAllAsync<FileRow>(
-    `SELECT * FROM files WHERE ${where} ORDER BY CASE WHEN first_seen > ? THEN 0 ELSE 1 END, modified DESC`, freshAfter);
+    `SELECT * FROM files WHERE ${where} ORDER BY CASE WHEN first_seen > '1' THEN 0 ELSE 1 END, modified DESC`);
 }
 
 export async function saveScan(fileId: string, faces: { frame: number; box: number[]; emb: Float32Array }[], w: number, h: number) {
@@ -206,18 +282,19 @@ export async function fileById(id: string) {
 
 /* ---------------------------------------------------------------- 家長的答案 */
 
-export async function setLabel(faceId: number, label: 1 | -1 | 0) {
+/** 家長說這張臉「是／不是」某個孩子（person：哪個孩子；0 = 取消） */
+export async function setLabel(faceId: number, label: 1 | -1 | 0, person = '') {
   const d = await db();
-  if (!label) { await d.runAsync('DELETE FROM labels WHERE face_id = ?', faceId); return; }
+  if (!label) { await d.runAsync('DELETE FROM labels2 WHERE face_id = ? AND person = ?', faceId, person); return; }
   const f = await d.getFirstAsync<{ emb: Uint8Array }>('SELECT emb FROM faces WHERE id = ?', faceId);
   if (!f) return;
-  await d.runAsync('INSERT OR REPLACE INTO labels(face_id, label, emb, at) VALUES (?,?,?,?)', faceId, label, f.emb, now());
+  await d.runAsync('INSERT OR REPLACE INTO labels2(face_id, person, label, emb, at) VALUES (?,?,?,?,?)', faceId, person, label, f.emb, now());
 }
 
-export async function loadLabels() {
+export async function loadLabels(person = '') {
   const d = await db();
   const rows = await d.getAllAsync<{ face_id: number; label: number; emb: Uint8Array }>(
-    'SELECT face_id, label, emb FROM labels ORDER BY at, face_id');
+    'SELECT face_id, label, emb FROM labels2 WHERE person = ? ORDER BY at, face_id', person);
   return rows.map((r) => ({ faceId: r.face_id, label: (r.label > 0 ? 1 : -1) as 1 | -1, emb: blobToEmb(r.emb) }));
 }
 
@@ -226,45 +303,53 @@ export async function undoLabelsSince(minutes: number, dry = false): Promise<num
   const since = new Date(Date.now() - minutes * 60000);
   const p = (n: number) => String(n).padStart(2, '0');
   const s = `${since.getFullYear()}-${p(since.getMonth() + 1)}-${p(since.getDate())} ${p(since.getHours())}:${p(since.getMinutes())}:${p(since.getSeconds())}`;
-  const n = (await d.getFirstAsync<{ n: number }>('SELECT COUNT(*) AS n FROM labels WHERE at >= ?', s))!.n;
-  if (!dry) await d.runAsync('DELETE FROM labels WHERE at >= ?', s);
+  const n = (await d.getFirstAsync<{ n: number }>('SELECT COUNT(*) AS n FROM labels2 WHERE at >= ?', s))!.n;
+  if (!dry) await d.runAsync('DELETE FROM labels2 WHERE at >= ?', s);
   return n;
 }
 
 export async function labeledList() {
   const d = await db();
-  return d.getAllAsync<{ face_id: number; label: number; file_id: string; name: string; folder: string }>(
-    `SELECT l.face_id, l.label, f.file_id, fl.name, fl.folder FROM labels l JOIN faces f ON f.id = l.face_id
+  return d.getAllAsync<{ face_id: number; label: number; person: string; file_id: string; name: string; folder: string }>(
+    `SELECT l.face_id, l.label, l.person, f.file_id, fl.name, fl.folder FROM labels2 l JOIN faces f ON f.id = l.face_id
      JOIN files fl ON fl.id = f.file_id ORDER BY l.at DESC LIMIT 400`);
 }
 
 /* ---------------------------------------------------------------- 判斷結果 */
 
-export async function saveDecisions(dec: Map<string, { kind: string; score: number; faceId: number }>) {
+export type PersonDecision = { fileId: string; person: string; kind: string; score: number; faceId: number };
+
+/** 換掉全部（或某個孩子的）判斷結果 */
+export async function saveDecisions(list: PersonDecision[], onlyPerson?: string) {
   const d = await db();
   await d.withTransactionAsync(async () => {
-    await d.runAsync('DELETE FROM decisions');
-    for (const [k, v] of dec) await d.runAsync('INSERT INTO decisions VALUES (?,?,?,?)', k, v.kind, v.score, v.faceId);
+    if (onlyPerson === undefined) await d.runAsync('DELETE FROM decisions2');
+    else await d.runAsync('DELETE FROM decisions2 WHERE person = ?', onlyPerson);
+    for (const v of list) await d.runAsync('INSERT OR REPLACE INTO decisions2 VALUES (?,?,?,?,?)', v.fileId, v.person, v.kind, v.score, v.faceId);
   });
 }
 
-export type ReviewItem = { fileId: string; faceId: number; score: number; name: string; folder: string; kind: string };
+export type ReviewItem = { fileId: string; faceId: number; score: number; name: string; folder: string; kind: string; person: string };
 
+/** 待確認（或確定）的臉；同一張臉只列一次（最像的那個孩子） */
 export async function decisionsList(kind: 'match' | 'review'): Promise<ReviewItem[]> {
   const d = await db();
-  return d.getAllAsync<ReviewItem>(
-    `SELECT d.file_id AS fileId, d.face_id AS faceId, d.score, f.name, f.folder, f.kind FROM decisions d
+  const rows = await d.getAllAsync<ReviewItem>(
+    `SELECT d.file_id AS fileId, d.face_id AS faceId, d.score, d.person, f.name, f.folder, f.kind FROM decisions2 d
      JOIN files f ON f.id = d.file_id
-     WHERE d.kind = ? AND d.face_id NOT IN (SELECT face_id FROM labels)
+     WHERE d.kind = ? AND NOT EXISTS (SELECT 1 FROM labels2 l WHERE l.face_id = d.face_id AND l.person = d.person)
      ORDER BY d.score ${kind === 'review' ? 'DESC' : 'ASC'}`, kind);
+  const seen = new Set<number>();
+  return rows.filter((r) => (seen.has(r.faceId) ? false : (seen.add(r.faceId), true)));
 }
 
 export async function counts() {
   const d = await db();
   const one = async (q: string) => (await d.getFirstAsync<{ n: number }>(q))!.n;
   return {
-    match: await one("SELECT COUNT(*) AS n FROM decisions WHERE kind = 'match'"),
-    review: await one("SELECT COUNT(*) AS n FROM decisions d WHERE kind = 'review' AND face_id NOT IN (SELECT face_id FROM labels)"),
+    match: await one("SELECT COUNT(DISTINCT file_id) AS n FROM decisions2 WHERE kind = 'match'"),
+    review: await one(`SELECT COUNT(DISTINCT face_id) AS n FROM decisions2 d WHERE kind = 'review'
+      AND NOT EXISTS (SELECT 1 FROM labels2 l WHERE l.face_id = d.face_id AND l.person = d.person)`),
     saved: await one('SELECT COUNT(*) AS n FROM saved'),
     files: await one('SELECT COUNT(*) AS n FROM files'),
     pending: await one("SELECT COUNT(*) AS n FROM files WHERE status = 'new'"),
@@ -305,24 +390,24 @@ export async function savedByFolder() {
  * 「從什麼時候開始算老師新上傳的」：第一次完整看完老師資料夾的時間（換資料夾就重新算）。
  * 在這之前就在資料夾裡的照片是「以前的照片」，慢慢整理、不一張一張通知。
  */
-export async function getBaseline(folderId: string): Promise<string | null> {
-  const v = (await getMeta('ntf_baseline').catch(() => null)) || '';
-  const i = v.indexOf('|');
-  return i > 0 && v.slice(0, i) === folderId ? v.slice(i + 1) : null;
+export async function listedOnce(folderId: string): Promise<boolean> {
+  if (await getMeta(`listed_once@${folderId}`).catch(() => null)) return true;
+  const v = (await getMeta('ntf_baseline').catch(() => null)) || ''; // 前一版的寫法
+  return v.startsWith(`${folderId}|`);
 }
 
-export async function setBaseline(folderId: string, t: string) {
-  await setMeta('ntf_baseline', `${folderId}|${t}`);
+export async function setListedOnce(folderId: string) {
+  await setMeta(`listed_once@${folderId}`, now());
 }
 
-/** 這些照片裡，哪些是 after 之後才第一次看到的（老師剛上傳的） */
-export async function freshAmong(ids: string[], after: string): Promise<Set<string>> {
+/** 這些照片裡，哪些是老師新上傳的（不是第一次看資料夾時就在裡面的） */
+export async function freshAmong(ids: string[]): Promise<Set<string>> {
   const d = await db();
   const out = new Set<string>();
   for (let i = 0; i < ids.length; i += 400) {
     const part = ids.slice(i, i + 400);
     const rows = await d.getAllAsync<{ id: string }>(
-      `SELECT id FROM files WHERE first_seen > ? AND id IN (${part.map(() => '?').join(',')})`, after, ...part);
+      `SELECT id FROM files WHERE first_seen > '1' AND id IN (${part.map(() => '?').join(',')})`, ...part);
     for (const r of rows) out.add(r.id);
   }
   return out;
@@ -330,7 +415,7 @@ export async function freshAmong(ids: string[], after: string): Promise<Set<stri
 
 export type PhotoInfo = {
   file_id: string; asset_id: string; at: string; name: string; folder: string; kind: string; modified: string;
-  first_seen: string | null; w: number | null; h: number | null;
+  first_seen: string | null; w: number | null; h: number | null; person: string | null;
   /** 孩子的臉（在照片裡的座標）；沒有的話是 null */
   fx: number | null; fy: number | null; fw: number | null; fh: number | null;
 };
@@ -343,9 +428,9 @@ export async function photosInfo(ids: string[]): Promise<PhotoInfo[]> {
     const part = ids.slice(i, i + 400);
     out.push(...await d.getAllAsync<PhotoInfo>(
       `SELECT s.file_id, s.asset_id, s.at, f.name, f.folder, f.kind, f.modified, f.first_seen, f.w, f.h,
-              fa.x AS fx, fa.y AS fy, fa.w AS fw, fa.h AS fh
+              dc.person, fa.x AS fx, fa.y AS fy, fa.w AS fw, fa.h AS fh
        FROM saved s JOIN files f ON f.id = s.file_id
-       LEFT JOIN decisions dc ON dc.file_id = s.file_id
+       LEFT JOIN (SELECT file_id, person, face_id, MAX(score) AS sc FROM decisions2 WHERE kind = 'match' GROUP BY file_id) dc ON dc.file_id = s.file_id
        LEFT JOIN faces fa ON fa.id = dc.face_id
        WHERE s.file_id IN (${part.map(() => '?').join(',')})`, ...part));
   }
@@ -367,7 +452,7 @@ export async function uploadedSince(folders: string[], since: string): Promise<{
 export async function unsavedMatches(): Promise<number> {
   const d = await db();
   const r = await d.getFirstAsync<{ n: number }>(
-    "SELECT COUNT(*) AS n FROM decisions WHERE kind = 'match' AND file_id NOT IN (SELECT file_id FROM saved)");
+    "SELECT COUNT(DISTINCT file_id) AS n FROM decisions2 WHERE kind = 'match' AND file_id NOT IN (SELECT file_id FROM saved)");
   return r?.n || 0;
 }
 
@@ -381,19 +466,21 @@ export async function pendingCount(includeVideos: boolean): Promise<number> {
 
 /* ---------------------------------------------------------------- 參考照片 */
 
-export async function listRefs() {
+/** 參考照片；person 有給就只拿那個孩子的 */
+export async function listRefs(person?: string) {
   const d = await db();
-  const refs = await d.getAllAsync<{ id: string; uri: string; status: string; chosen: number | null }>(
-    'SELECT id, uri, status, chosen FROM refs ORDER BY added_at');
+  const refs = (await d.getAllAsync<{ id: string; uri: string; status: string; chosen: number | null; person: string | null }>(
+    'SELECT id, uri, status, chosen, person FROM refs ORDER BY added_at'))
+    .map((r) => ({ ...r, person: r.person || '' })).filter((r) => person === undefined || r.person === person);
   const faces = await d.getAllAsync<{ ref_id: string; idx: number; size: number; emb: Uint8Array }>(
     'SELECT ref_id, idx, size, emb FROM ref_faces ORDER BY ref_id, idx');
   return refs.map((r) => ({ ...r, faces: faces.filter((f) => f.ref_id === r.id).map((f) => ({ size: f.size, emb: blobToEmb(f.emb) })) }));
 }
 
-export async function addRef(id: string, uri: string, faces: { size: number; emb: Float32Array }[]) {
+export async function addRef(id: string, uri: string, faces: { size: number; emb: Float32Array }[], person = '') {
   const d = await db();
   await d.withTransactionAsync(async () => {
-    await d.runAsync('INSERT OR REPLACE INTO refs(id, uri, status, chosen, added_at) VALUES (?,?,?,?,?)', id, uri, 'ok', null, now());
+    await d.runAsync('INSERT OR REPLACE INTO refs(id, uri, status, chosen, added_at, person) VALUES (?,?,?,?,?,?)', id, uri, 'ok', null, now(), person);
     await d.runAsync('DELETE FROM ref_faces WHERE ref_id = ?', id);
     for (let i = 0; i < faces.length; i++) {
       await d.runAsync('INSERT INTO ref_faces VALUES (?,?,?,?)', id, i, faces[i].size, embToBlob(faces[i].emb));
@@ -428,9 +515,10 @@ export async function lastRuns(limit = 30) {
 
 export async function resetAll() {
   const d = await db();
-  await d.execAsync('DELETE FROM files; DELETE FROM faces; DELETE FROM labels; DELETE FROM decisions; DELETE FROM saved; DELETE FROM runs;');
+  await d.execAsync('DELETE FROM files; DELETE FROM faces; DELETE FROM labels; DELETE FROM decisions; DELETE FROM labels2; DELETE FROM decisions2; DELETE FROM saved; DELETE FROM runs;');
   // 看資料夾的進度、「從什麼時候開始算新照片」也一起重來（不然重新看到的舊照片會被當成新上傳的）
-  await d.execAsync("DELETE FROM meta WHERE k IN ('last_list', 'list_resume', 'folder_map', 'quick_at', 'ntf_baseline', 'ntf_batch', 'backlog_saved')");
+  await d.execAsync(`DELETE FROM meta WHERE k IN ('last_list', 'list_resume', 'folder_map', 'quick_at', 'ntf_baseline', 'ntf_batch', 'backlog_saved')
+    OR k LIKE 'last_list@%' OR k LIKE 'list_resume@%' OR k LIKE 'folder_map@%' OR k LIKE 'quick_at@%' OR k LIKE 'listed_once@%'`);
 }
 
 /* ---------------------------------------------------------------- 手機相簿（LINE 下載）的照片 */
@@ -463,9 +551,9 @@ export async function forgetLocalFiles(ids: string[]) {
   const d = await db();
   await d.withTransactionAsync(async () => {
     for (const id of ids) {
-      await d.runAsync('DELETE FROM labels WHERE face_id IN (SELECT id FROM faces WHERE file_id = ?)', id);
+      await d.runAsync('DELETE FROM labels2 WHERE face_id IN (SELECT id FROM faces WHERE file_id = ?)', id);
       await d.runAsync('DELETE FROM faces WHERE file_id = ?', id);
-      await d.runAsync('DELETE FROM decisions WHERE file_id = ?', id);
+      await d.runAsync('DELETE FROM decisions2 WHERE file_id = ?', id);
       await d.runAsync('DELETE FROM files WHERE id = ?', id);
     }
   });

@@ -8,8 +8,9 @@ export const requestStop = (_hard = false) => { if (stop) return; stop = true; s
 export async function interruptedScan() { return false; }
 export async function refreshCounts() { setState({ counts: await DB.counts() }); }
 export function scheduleApply() { refreshCounts(); }
-export async function removeReference(id: string) { await DB.deleteRef(id); }
-export async function addReferencePhotos(uris: string[]) { DB.addDemoRefs(uris); await refreshCounts(); return { ok: uris.length, noface: 0 }; }
+export async function removeReference(id: string, _uri?: string, _person = '') { await DB.deleteRef(id); }
+export async function removeKid(key: string) { await DB.removeKid(key); }
+export async function addReferencePhotos(uris: string[], _onEach?: unknown, person = '') { DB.addDemoRefs(uris, person); await refreshCounts(); return { ok: uris.length, noface: 0 }; }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let ran = false;
 export async function runScan() {

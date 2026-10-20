@@ -112,6 +112,7 @@ export default function NewPhotos() {
   const [recent, setRecent] = useState(false); // 沒有新的一批：顯示最近存的照片
   const [stats, setStats] = useState<Map<string, { n: number; last: string }>>(new Map());
   const [st, setSt] = useState<DB.Settings | null>(null);
+  const [kids, setKids] = useState<DB.Kid[]>([]);
   const [sel, setSel] = useState<string | null>(null);
   const [hasLine, setHasLine] = useState(false);
   const shared = useRef(false);
@@ -134,6 +135,7 @@ export default function NewPhotos() {
       }
       if (!alive) return;
       setSt(settings);
+      setKids(await DB.getKids());
       setRecent(fallback);
       setStats(up);
       setRows(info);
@@ -186,7 +188,7 @@ export default function NewPhotos() {
                 <Text style={s.evTitle}>{ev.name}</Text>
               </View>
               {stat ? <Text style={s.evSub}>{tr('new.uploaded', { when: whenText(stat.last), n: Math.max(stat.n, ev.photos.length) })}</Text> : null}
-              <View style={s.chip}><Text style={s.chipText}>{tr('new.found', { who: st ? kidName(st) : tr('ntf.kid'), n: ev.photos.length })}</Text></View>
+              <View style={s.chip}><Text style={s.chipText}>{tr('new.found', { who: st ? kidName(st, kids, ev.photos.map((p) => p.person || '')) : tr('ntf.kid'), n: ev.photos.length })}</Text></View>
             </View>
 
             {/* 最清楚的一張 */}

@@ -72,7 +72,7 @@ async function post(b: Batch, style: 'new' | 'morning', s: DB.Settings, id = NOT
   const events = groupEvents(rows);
   const first = events[0];
   const n = rows.length;
-  const who = kidName(s);
+  const who = kidName(s, await DB.getKids(), rows.map((r) => r.person || ''));
   // 老師這次一共上傳了幾張（有孩子的、沒有孩子的都算）
   const firstSeen = rows.map((r) => r.first_seen || r.at).sort()[0];
   const since = DB.localTime(new Date(DB.parseLocal(firstSeen).getTime() - 2 * 3600e3));
@@ -143,8 +143,7 @@ async function notifyNew(ids: string[], s: DB.Settings) {
  */
 export async function afterBackground(savedIds: string[], info: { pendingLeft: number; review: number }) {
   const s = await DB.getSettings();
-  const base = s.folderId ? await DB.getBaseline(s.folderId) : null;
-  const fresh = base && savedIds.length ? await DB.freshAmong(savedIds, base) : new Set<string>();
+  const fresh = savedIds.length ? await DB.freshAmong(savedIds) : new Set<string>();
   const freshIds = savedIds.filter((id) => fresh.has(id));
   if (freshIds.length) await notifyNew(freshIds, s).catch((e) => console.warn('notify failed', e));
   // 以前的照片：不一張一張通知，全部看完時說一聲

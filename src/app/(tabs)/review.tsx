@@ -21,7 +21,7 @@ type Mark = 1 | -1 | 0; // 是 / 不是 / 跳過
 
 /* ---------------------------------------------------------------- 一張一張看：可以左右滑的卡片 */
 
-function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number; onAnswer: (m: Mark) => void }) {
+function SwipeCard({ item, left, onAnswer, who }: { item: DB.ReviewItem; left: number; onAnswer: (m: Mark) => void; who?: string }) {
   const t = useTheme();
   const s = useStyles();
   useLang();
@@ -62,6 +62,7 @@ function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number
 
   return (
     <View style={{ alignItems: 'center', gap: 14, paddingTop: 6 }}>
+      {who ? <Text style={s.whoBig}>{tr('rv.isKid', { name: who })}</Text> : null}
       <View style={[s.tip, { alignSelf: 'stretch', alignItems: 'center' }]}>
         <Text style={s.tipText}>{tr('rv.swipeRight')}<Text style={[s.chip, { backgroundColor: t.c.yes }]}>{chip(`✓ ${tr('common.yes')}`)}</Text>{sp()}{tr('rv.swipeLeft')}<Text style={[s.chip, { backgroundColor: t.c.no }]}>{chip(`✕ ${tr('common.no')}`)}</Text></Text>
       </View>
@@ -72,7 +73,7 @@ function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number
           <Animated.View style={[s.fcard, rounded && { borderRadius: t.id === 'candy' ? 26 : 24, paddingBottom: t.captions ? 36 : 10 }, t.id === 'candy' && s.fcardCandy,
             { transform: [{ translateX: drag }, { rotate }] }]}>
             <Tape i={0} />
-            <Pressable onPress={() => { if (Date.now() - moved.current > 400 && !busy.current) router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } }); }} accessibilityLabel={tr('rv.viewWhole')}>
+            <Pressable onPress={() => { if (Date.now() - moved.current > 400 && !busy.current) router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId), person: item.person } }); }} accessibilityLabel={tr('rv.viewWhole')}>
               <FaceCard faceId={item.faceId} size={photo} radius={rounded ? 18 : 0} />
             </Pressable>
             {t.captions ? <Text style={s.cap3} numberOfLines={1}>{item.folder.split('/').pop()}</Text> : null}
@@ -82,7 +83,7 @@ function SwipeCard({ item, left, onAnswer }: { item: DB.ReviewItem; left: number
           </View>
         </GestureDetector>
       </View>
-      <Pressable style={s.ctx} onPress={() => router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId) } })}>
+      <Pressable style={s.ctx} onPress={() => router.push({ pathname: '/viewer', params: { id: item.fileId, face: String(item.faceId), person: item.person } })}>
         <View style={s.ctxImg}>{ctx ? <Image source={{ uri: ctx }} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}</View>
         <Text style={s.ctxText}>{tr('rv.ctx', { n: left })}</Text>
       </Pressable>
@@ -113,9 +114,19 @@ export default function Review() {
   const [tab, setTab] = useState<'todo' | 'done'>('todo');
   const [busy, setBusy] = useState(false);
   const skipped = useRef(new Set<number>());
+  const [kids, setKids] = useState<DB.Kid[]>([]);
+  const [child, setChild] = useState('');
+  // 兄弟姊妹：每張臉上寫「是哥哥嗎？」（只有一個孩子時不用寫）
+  const whoOf = (person: string) => {
+    if (kids.length < 2) return undefined;
+    const k = kids.find((x) => x.key === person);
+    return k ? k.name || child || tr('refs.myChild') : undefined;
+  };
 
   const load = useCallback(async () => {
     const st = await DB.getSettings();
+    setKids(await DB.getKids());
+    setChild(st.childName || '');
     const th = (THRESHOLDS[st.strictness] || THRESHOLDS.standard)[0];
     setThr(th);
     const list = await DB.decisionsList('review');
@@ -138,7 +149,7 @@ export default function Review() {
     setBusy(true);
     try {
       for (const [id, m] of pairs) {
-        if (m) await DB.setLabel(id, m);
+        if (m) await DB.setLabel(id, m, items.find((x) => x.faceId === id)?.person || '');
         else skipped.current.add(id);
       }
       const done = new Set(pairs.map(([id]) => id));
@@ -224,12 +235,13 @@ export default function Review() {
                       const m = marksFull[it.faceId] ?? 0;
                       return (
                         <Pressable key={it.faceId} onPress={() => cycle(it.faceId)} accessibilityLabel={m === 1 ? tr('common.yes') : m === -1 ? tr('common.no') : tr('rv.unsetA11y')}
-                          onLongPress={() => router.push({ pathname: '/viewer', params: { id: it.fileId, face: String(it.faceId) } })}
+                          onLongPress={() => router.push({ pathname: '/viewer', params: { id: it.fileId, face: String(it.faceId), person: it.person } })}
                           style={({ pressed }) => pressed ? { transform: [{ scale: 0.95 }] } : null}>
                           <View style={[s.pf, { width: cell, height: cell }, m === 1 && { borderColor: t.c.yes }, m === -1 && { borderColor: t.c.no }]}>
                             <FaceCard faceId={it.faceId} size={cell - 14} radius={t.id === 'candy' ? 14 : 9} style={m === -1 ? { opacity: 0.55 } : undefined} />
                             {m === 1 ? <View style={s.mkYes}><Stamp yes size={28} /></View> : null}
                             {m === -1 ? <View style={s.mkNo}><Stamp yes={false} size={40} /></View> : null}
+                            {whoOf(it.person) ? <Text style={s.who} numberOfLines={1}>{whoOf(it.person)}</Text> : null}
                           </View>
                         </Pressable>
                       );
@@ -237,7 +249,7 @@ export default function Review() {
                   </View>
                 </>
               ) : one ? (
-                <SwipeCard item={one} left={items.length} onAnswer={(m) => commit([[one.faceId, m]])} />
+                <SwipeCard item={one} left={items.length} who={whoOf(one.person)} onAnswer={(m) => commit([[one.faceId, m]])} />
               ) : null}
             </>
           )
@@ -254,13 +266,14 @@ export default function Review() {
             <P muted style={{ fontSize: 13, textAlign: labeled.length ? 'left' : 'center' }}>{labeled.length ? tr('rv.tapToChange') : tr('rv.noneLabeled')}</P>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {labeled.slice(0, 160).map((l) => (
-                <Pressable key={l.face_id} onPress={async () => {
-                  await DB.setLabel(l.face_id, l.label > 0 ? -1 : 1);
+                <Pressable key={`${l.face_id}|${l.person}`} onPress={async () => {
+                  await DB.setLabel(l.face_id, l.label > 0 ? -1 : 1, l.person);
                   setLabeled(await DB.labeledList()); scheduleApply();
                 }}>
                   <View style={[s.pf, s.pfSm, { width: lcell, height: lcell, borderColor: l.label > 0 ? t.c.yes : t.c.no }]}>
                     <FaceCard faceId={l.face_id} size={lcell - 12} radius={8} />
                     <View style={s.mkSm}><Stamp yes={l.label > 0} size={22} /></View>
+                    {whoOf(l.person) ? <Text style={[s.who, { fontSize: 10 }]} numberOfLines={1}>{whoOf(l.person)}</Text> : null}
                   </View>
                 </Pressable>
               ))}
@@ -303,6 +316,8 @@ const useStyles = makeStyles((t: Theme) => {
     mkYes: { position: 'absolute', right: 6, bottom: 6 },
     mkNo: { position: 'absolute', left: '50%', top: '50%', marginLeft: -20, marginTop: -20 },
     mkSm: { position: 'absolute', right: 3, bottom: 3 },
+    who: { ...t.round, position: 'absolute', left: 6, top: 6, maxWidth: '70%', fontSize: 11, color: '#fff', backgroundColor: 'rgba(60,40,30,0.62)', paddingHorizontal: 7, paddingVertical: 1, borderRadius: 99, overflow: 'hidden' },
+    whoBig: { ...t.title, fontSize: 19, color: c.accentDeep, textAlign: 'center' },
 
     foot: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingBottom: 10 },
     footc: { padding: 12, gap: 8, boxShadow: t.dark ? '0px -6px 24px rgba(0,0,0,0.4)' : '0px 8px 22px rgba(138,103,68,0.22)' } as ViewStyle,

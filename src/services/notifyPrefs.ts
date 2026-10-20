@@ -34,5 +34,15 @@ export function quietNow(s: Pick<Settings, 'quiet' | 'dayFrom' | 'dayTo'>, d = n
   return from < to ? h < from || h >= to : h < from && h >= to;
 }
 
-/** 通知裡怎麼稱呼孩子（沒填小名就寫「孩子」） */
-export const kidName = (s: Pick<Settings, 'childName'>) => (s.childName || '').trim() || tr('ntf.kid');
+/**
+ * 通知裡怎麼稱呼孩子：
+ * - 兄弟姊妹：這次找到的孩子的名字（「哥哥、妹妹」）
+ * - 一個孩子：設定裡的小名，沒填就寫「孩子」
+ */
+export function kidName(s: Pick<Settings, 'childName'>, kids?: { key: string; name: string }[], persons?: string[]): string {
+  const fallback = (s.childName || '').trim() || tr('ntf.kid');
+  if (!kids || kids.length < 2) return (kids?.[0]?.name || '').trim() || fallback;
+  const keys = persons && persons.length ? [...new Set(persons)] : kids.map((k) => k.key);
+  const names = kids.filter((k) => keys.includes(k.key)).map((k) => k.name.trim() || fallback);
+  return names.length ? names.join(tr('ntf.and')) : fallback;
+}

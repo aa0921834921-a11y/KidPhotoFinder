@@ -5,7 +5,7 @@ import { engineReady, modelReady, warmUp } from '../services/recognizer';
 import { addReferencePhotos } from '../services/scanner';
 
 /** onProgress：顯示進度文字（傳空字串代表結束） */
-export async function pickAndAddRefs(onProgress?: (msg: string) => void): Promise<boolean> {
+export async function pickAndAddRefs(onProgress?: (msg: string) => void, person = ''): Promise<boolean> {
   if (!modelReady()) { Alert.alert(tr('pick.notReadyTitle'), tr('pick.notReadyBody')); return false; }
   const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 30, quality: 1 });
   if (r.canceled || !r.assets.length) return false;
@@ -16,7 +16,7 @@ export async function pickAndAddRefs(onProgress?: (msg: string) => void): Promis
       onProgress?.(tr('pick.warming'));
       await warmUp();
     }
-    res = await addReferencePhotos(r.assets.map((a) => a.uri), (i) => onProgress?.(tr('pick.finding', { i: i + 1, n })));
+    res = await addReferencePhotos(r.assets.map((a) => a.uri), (i) => onProgress?.(tr('pick.finding', { i: i + 1, n })), person);
   } finally {
     onProgress?.('');
   }

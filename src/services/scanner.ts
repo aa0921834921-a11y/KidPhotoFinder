@@ -6,12 +6,12 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { buildReferences, decide, THRESHOLDS } from '../core/decide';
 import { tr } from '../i18n';
 import * as DB from './db';
 import * as Drive from './drive';
 import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { copyLocalToAlbum, isLocal } from './localClean';
+import { judgeAll, referenceFeatures } from './judge';
 import * as Notices from './notices';
 import { bump, getState, setState } from './state';
 import * as FG from '../../modules/kpf-foreground';
@@ -42,18 +42,10 @@ export async function refreshCounts() {
 
 /* ---------------------------------------------------------------- 參考照片 */
 
-export async function referenceFeatures(): Promise<Float32Array[]> {
-  const refs = await DB.listRefs();
-  const { feats, results } = buildReferences(refs.map((r) => ({ id: r.id, faces: r.faces })));
-  for (const r of results) {
-    const old = refs.find((x) => x.id === r.id);
-    if (old && (old.status !== r.status || old.chosen !== (r.chosen ?? null))) await DB.setRefStatus(r.id, r.status, r.chosen ?? null);
-  }
-  return feats;
-}
+export { referenceFeatures };
 
-/** 加入參考照片：複製到 App 裡、找臉（左右翻轉平均，比較準）。 */
-export async function addReferencePhotos(uris: string[], onEach?: (i: number) => void): Promise<{ ok: number; noface: number }> {
+/** 加入參考照片（person：哪個孩子）：複製到 App 裡、找臉（左右翻轉平均，比較準）。 */
+export async function addReferencePhotos(uris: string[], onEach?: (i: number) => void, person = ''): Promise<{ ok: number; noface: number }> {
   if (!modelReady()) throw new Error(tr('err.needModel'));
   const dir = new Directory(Paths.document, 'refs');
   if (!dir.exists) dir.create({ intermediates: true });
@@ -66,33 +58,30 @@ export async function addReferencePhotos(uris: string[], onEach?: (i: number) =>
     // 複製一份到 App 裡，之後顯示和重新計算都用這份
     new File(uris[i]).copy(dst);
     const faces = await analyze(img, { minFacePx: 24, flip: true });
-    await DB.addRef(id, dst.uri, faces.map((f) => ({ size: f.size, emb: f.emb })));
+    await DB.addRef(id, dst.uri, faces.map((f) => ({ size: f.size, emb: f.emb })), person);
     if (faces.length) ok++; else noface++;
   }
-  await referenceFeatures();
+  await referenceFeatures(person);
   bump();
   return { ok, noface };
 }
 
-export async function removeReference(id: string, uri: string) {
+export async function removeReference(id: string, uri: string, person = '') {
   await DB.deleteRef(id);
   try { new File(uri).delete(); } catch {}
-  await referenceFeatures();
+  await referenceFeatures(person);
+  bump();
+}
+
+/** 移除一個孩子（參考照片檔案也刪掉；已經存進相簿的照片不會動） */
+export async function removeKid(key: string) {
+  for (const r of await DB.removeKid(key)) { try { new File(r.uri).delete(); } catch {} }
   bump();
 }
 
 /* ---------------------------------------------------------------- 判斷 + 存相簿 */
 
-async function judge() {
-  const s = await DB.getSettings();
-  const [m, r] = THRESHOLDS[s.strictness] || THRESHOLDS.standard;
-  const refs = await referenceFeatures();
-  const faces = await DB.loadFaces();
-  const labels = await DB.loadLabels();
-  const { decisions } = decide(faces, refs, labels, m, r);
-  await DB.saveDecisions(decisions);
-  return decisions;
-}
+const judge = judgeAll;
 
 async function album(name: string): Promise<MediaLibrary.Album | null> {
   return MediaLibrary.Album.get(name);
@@ -207,18 +196,27 @@ const QUICK_MARGIN_MS = 30 * 60e3;
 
 async function loadMap(folderId: string): Promise<Map<string, string> | null> {
   try {
-    const v = JSON.parse((await DB.getMeta(MAP_KEY)) || 'null') as { folderId: string; dirs: [string, string][] } | null;
+    const own = await DB.getMeta(`${MAP_KEY}@${folderId}`);
+    const v = JSON.parse(own || (await DB.getMeta(MAP_KEY)) || 'null') as { folderId: string; dirs: [string, string][] } | null;
     return v && v.folderId === folderId && v.dirs?.length ? new Map(v.dirs) : null;
   } catch {
     return null;
   }
 }
-const saveMap = (folderId: string, dirs: Map<string, string>) => DB.setMeta(MAP_KEY, JSON.stringify({ folderId, dirs: [...dirs] }));
+const saveMap = (folderId: string, dirs: Map<string, string>) => DB.setMeta(`${MAP_KEY}@${folderId}`, JSON.stringify({ folderId, dirs: [...dirs] }));
 
-/** 「資料夾ID|時間(ms)」→ 時間（不是這個資料夾就是 0） */
+/** 每個資料夾分開記：「key@資料夾ID」；也看得懂前一版的「資料夾ID|內容」 */
+async function metaFor(key: string, folderId: string): Promise<string | null> {
+  const v = await DB.getMeta(`${key}@${folderId}`).catch(() => null);
+  if (v) return v;
+  const old = (await DB.getMeta(key).catch(() => null)) || '';
+  return old.startsWith(`${folderId}|`) ? old.slice(folderId.length + 1) : null;
+}
+const setMetaFor = (key: string, folderId: string, v: string) => DB.setMeta(`${key}@${folderId}`, v);
+
+/** 時間(ms)（沒看過這個資料夾就是 0） */
 async function stampFor(key: string, folderId: string): Promise<number> {
-  const [f, t] = ((await DB.getMeta(key).catch(() => null)) || '|0').split('|');
-  return f === folderId ? Number(t) || 0 : 0;
+  return Number(await metaFor(key, folderId)) || 0;
 }
 
 /**
@@ -238,8 +236,76 @@ async function quickCheck(folderId: string, dirs: Map<string, string>): Promise<
   }
   if (files.length) await DB.upsertListed(files.map(({ thumb, ...f }) => f));
   if (r.newDirs.length) await saveMap(folderId, dirs);
-  await DB.setMeta(QUICK_KEY, `${folderId}|${startedAt}`);
+  await setMetaFor(QUICK_KEY, folderId, String(startedAt));
   return files;
+}
+
+/** 看一個老師的資料夾（快速檢查、接著看、或完整看一遍），回傳這次看到的檔案 */
+async function listOne(folder: DB.Folder, mode: 'manual' | 'background', opts: { resume?: boolean }, videos: boolean,
+  t0: number, budgetMs: number): Promise<Drive.ListedFile[]> {
+  const folderId = folder.id;
+  let listed: Drive.ListedFile[] = [];
+  const lastAt = await stampFor(LIST_KEY, folderId);
+  const freshMs = opts.resume ? LIST_FRESH_MS.resume : LIST_FRESH_MS[mode];
+  const pending = await DB.pendingCount(videos);
+  // 看到一半被關掉的話，從上次看到的地方接著看（已經看到的檔案每一批都會先存好）
+  let resume: Drive.ListState | null = null;
+  try { resume = JSON.parse((await metaFor(LIST_RESUME, folderId)) || 'null'); } catch {}
+  // 前一版的寫法：{ folderId, state }
+  if (resume && (resume as any).state) resume = (resume as any).folderId === folderId ? (resume as any).state : null;
+  // 第一次看這個資料夾：看到的都算「以前的照片」
+  const first = !(await DB.listedOnce(folderId));
+  // 自動檢查：一天內完整看過資料夾的話，只問「有沒有新檔案」
+  const map = mode === 'background' && !resume && !first && Date.now() - lastAt < FULL_EVERY_MS ? await loadMap(folderId) : null;
+  if (map) {
+    try {
+      listed = await quickCheck(folderId, map);
+    } catch (e) {
+      if (e instanceof Drive.NeedSignIn) throw e;
+      if (!(e instanceof Stopped)) console.warn('quick check failed', e); // 網路不穩之類：這次先整理還沒看的，下次再問
+    }
+    return listed;
+  }
+  if (!resume && !first && Date.now() - lastAt < freshMs && pending > 0) {
+    setState({ message: tr('scan.resumePending', { n: pending }) });
+    return listed;
+  }
+  try {
+    if (resume) setState({ message: tr('scan.resumeListing', { n: resume.count }) });
+    const dirs = new Map<string, string>();
+    let dirsComplete = !resume || !!resume.dirs; // 舊版存的進度沒有資料夾清單
+    const list = (from: Drive.ListState | null) => Drive.listFolder(folderId, folder.name || tr('scan.teacherFolder'), (n) => {
+      // 資料夾很大時，看資料夾這一步也能停（背景時間到了也先停，看到哪裡都記著，下次接著看）
+      if (cancel || Date.now() - t0 > budgetMs) throw new Stopped();
+      if (!getState().stopping) setState({ message: tr('scan.listingN', { n }) });
+      FG.update(fgTitle(), tr('scan.listingN', { n }));
+    }, {
+      resume: from,
+      dirs,
+      onWave: async (files, state) => {
+        await DB.upsertListed(files.map(({ thumb, ...f }) => f), first);
+        await setMetaFor(LIST_RESUME, folderId, JSON.stringify(state));
+      },
+    });
+    try {
+      listed = await list(resume);
+    } catch (e) {
+      // 接著看失敗（例如隔太久，Google 的分頁記號過期了）：從頭看一次
+      if (e instanceof Stopped || e instanceof Drive.NeedSignIn || !resume) throw e;
+      await setMetaFor(LIST_RESUME, folderId, '');
+      dirs.clear();
+      dirsComplete = true;
+      listed = await list(null);
+    }
+    await setMetaFor(LIST_RESUME, folderId, '');
+    await setMetaFor(LIST_KEY, folderId, String(Date.now()));
+    if (dirsComplete) await saveMap(folderId, dirs);
+    // 第一次完整看完這個資料夾：之後才出現的檔案，就是老師新上傳的
+    if (first) await DB.setListedOnce(folderId);
+  } catch (e) {
+    if (!(e instanceof Stopped)) throw e;
+  }
+  return listed;
 }
 
 /**
@@ -265,73 +331,23 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
   const savedIds: string[] = [];
   try {
     const s = await DB.getSettings();
-    if (!s.folderId) throw new Error(tr('err.noFolder'));
+    if (!DB.foldersOf(s).length) throw new Error(tr('err.noFolder'));
     if (!modelReady()) {
       setState({ phase: 'model', message: tr('scan.downloadingModel') });
       await downloadModel((p) => setState({ modelProgress: p }));
     }
     let listed: Drive.ListedFile[] = [];
-    const folderId = s.folderId;
-    const lastAt = await stampFor(LIST_KEY, folderId);
-    const freshMs = opts.resume ? LIST_FRESH_MS.resume : LIST_FRESH_MS[mode];
-    const pending = await DB.pendingCount(s.videos);
-    // 看到一半被關掉的話，從上次看到的地方接著看（已經看到的檔案每一批都會先存好）
-    const savedResume = JSON.parse((await DB.getMeta(LIST_RESUME)) || 'null') as { folderId: string; state: Drive.ListState } | null;
-    const resume = savedResume && savedResume.folderId === folderId ? savedResume.state : null;
-    // 自動檢查：一天內完整看過資料夾的話，只問「有沒有新檔案」
-    const map = mode === 'background' && !resume && Date.now() - lastAt < FULL_EVERY_MS ? await loadMap(folderId) : null;
-    if (map) {
-      try {
-        listed = await quickCheck(folderId, map);
-      } catch (e) {
-        if (e instanceof Drive.NeedSignIn) throw e;
-        if (!(e instanceof Stopped)) console.warn('quick check failed', e); // 網路不穩之類：這次先整理還沒看的，下次再問
-      }
-    } else if (!resume && Date.now() - lastAt < freshMs && pending > 0) {
-      setState({ message: tr('scan.resumePending', { n: pending }) });
-    } else {
-      try {
-        if (resume) setState({ message: tr('scan.resumeListing', { n: resume.count }) });
-        const dirs = new Map<string, string>();
-        let dirsComplete = !resume || !!resume.dirs; // 舊版存的進度沒有資料夾清單
-        const list = (from: Drive.ListState | null) => Drive.listFolder(folderId, s.folderName || tr('scan.teacherFolder'), (n) => {
-          // 資料夾很大時，看資料夾這一步也能停（背景時間到了也先停，看到哪裡都記著，下次接著看）
-          if (cancel || Date.now() - t0 > budgetMs) throw new Stopped();
-          if (!getState().stopping) setState({ message: tr('scan.listingN', { n }) });
-          FG.update(fgTitle(), tr('scan.listingN', { n }));
-        }, {
-          resume: from,
-          dirs,
-          onWave: async (files, state) => {
-            await DB.upsertListed(files.map(({ thumb, ...f }) => f));
-            await DB.setMeta(LIST_RESUME, JSON.stringify({ folderId, state }));
-          },
-        });
-        try {
-          listed = await list(resume);
-        } catch (e) {
-          // 接著看失敗（例如隔太久，Google 的分頁記號過期了）：從頭看一次
-          if (e instanceof Stopped || e instanceof Drive.NeedSignIn || !resume) throw e;
-          await DB.setMeta(LIST_RESUME, '');
-          dirs.clear();
-          dirsComplete = true;
-          listed = await list(null);
-        }
-        await DB.setMeta(LIST_RESUME, '');
-        await DB.setMeta(LIST_KEY, `${folderId}|${Date.now()}`);
-        if (dirsComplete) await saveMap(folderId, dirs);
-        // 第一次完整看完這個資料夾：之後才出現的檔案，就是老師新上傳的
-        if (!(await DB.getBaseline(folderId))) await DB.setBaseline(folderId, DB.now());
-      } catch (e) {
-        if (!(e instanceof Stopped)) throw e;
-      }
+    const folders = DB.foldersOf(s);
+    // 每個老師的資料夾分開看（兄弟姊妹不同班）
+    for (const folder of folders) {
+      if (cancel) break;
+      listed = listed.concat(await listOne(folder, mode, opts, s.videos, t0, budgetMs));
     }
     const thumbs = new Map(listed.map((f) => [f.id, f.thumb]));
     // 老師剛上傳的照片先看（以前的照片還沒看完也一樣）
-    const baseline = await DB.getBaseline(folderId);
-    const todo = cancel ? [] : await DB.filesToScan(s.videos, baseline);
+    const todo = cancel ? [] : await DB.filesToScan(s.videos);
     // 老師剛上傳的有幾張（排在最前面）
-    const freshCount = baseline ? todo.filter((f) => f.first_seen && f.first_seen > baseline).length : 0;
+    const freshCount = todo.filter((f) => DB.isFresh(f.first_seen)).length;
     let notified = 0; // savedIds 裡前面幾張已經通知過了
     // 畫面顯示整體進度（之前看過的也算進去），App 重開後數字會接著跑
     const before = await DB.scanProgress(s.videos);

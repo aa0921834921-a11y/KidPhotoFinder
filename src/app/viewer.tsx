@@ -12,7 +12,7 @@ import { useTheme } from '../ui/theme';
 import { usePreview } from '../ui/usePreview';
 
 export default function Viewer() {
-  const { id, face } = useLocalSearchParams<{ id: string; face?: string }>();
+  const { id, face, person } = useLocalSearchParams<{ id: string; face?: string; person?: string }>();
   const ins = useSafeAreaInsets();
   const t = useTheme();
   useLang();
@@ -27,7 +27,7 @@ export default function Viewer() {
   const k = Math.min(width / iw, (height - 200) / ih);
   const dw = iw * k, dh = ih * k;
 
-  const answer = async (l: 1 | -1) => { if (face) { await DB.setLabel(Number(face), l); scheduleApply(); } router.back(); };
+  const answer = async (l: 1 | -1) => { if (face) { await DB.setLabel(Number(face), l, person || ''); scheduleApply(); } router.back(); };
 
   return (
     <View style={{ flex: 1, backgroundColor: '#1d1612', paddingTop: ins.top, paddingBottom: ins.bottom + 10 }}>
