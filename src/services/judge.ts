@@ -30,7 +30,7 @@ export async function judgeAll(): Promise<Map<string, FileDecision>> {
   for (const kid of kids) {
     const refs = await referenceFeatures(kid.key);
     if (!refs.length) continue;
-    const { decisions } = decide(faces, refs, await DB.loadLabels(kid.key), m, r);
+    const { decisions } = await decide(faces, refs, await DB.loadLabels(kid.key), m, r);
     for (const [fileId, d] of decisions) {
       all.push({ fileId, person: kid.key, kind: d.kind, score: d.score, faceId: d.faceId });
       const cur = byFile.get(fileId);

@@ -68,6 +68,7 @@ export default function Root() {
           <Stack.Screen name="clean" options={{ presentation: 'modal' }} />
           <Stack.Screen name="new" />
           <Stack.Screen name="notify" />
+          <Stack.Screen name="check" />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

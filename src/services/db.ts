@@ -563,3 +563,65 @@ export async function forgetLocalFiles(ids: string[]) {
     }
   });
 }
+
+/* ---------------------------------------------------------------- 核對：抽查一個活動有沒有漏掉或存錯 */
+
+export type CheckFolder = { folder: string; total: number; saved: number; review: number; missed: number; last: string; checkedAt: string | null };
+
+/** 每個活動（老師的資料夾）：老師上傳幾張、存了幾張、待確認幾張、判斷沒有孩子（但有人臉）幾張 */
+export async function checkFolders(): Promise<CheckFolder[]> {
+  const d = await db();
+  const rows = await d.getAllAsync<{ folder: string; total: number; saved: number; review: number; missed: number; last: string }>(
+    `SELECT f.folder AS folder, COUNT(*) AS total,
+       SUM(CASE WHEN s.file_id IS NOT NULL THEN 1 ELSE 0 END) AS saved,
+       SUM(CASE WHEN s.file_id IS NULL AND EXISTS (SELECT 1 FROM decisions2 d WHERE d.file_id = f.id AND d.kind = 'review'
+             AND NOT EXISTS (SELECT 1 FROM labels2 l WHERE l.face_id = d.face_id AND l.person = d.person)) THEN 1 ELSE 0 END) AS review,
+       SUM(CASE WHEN s.file_id IS NULL AND f.nfaces > 0 AND NOT EXISTS (SELECT 1 FROM decisions2 d WHERE d.file_id = f.id) THEN 1 ELSE 0 END) AS missed,
+       MAX(COALESCE(f.modified, '')) AS last
+     FROM files f LEFT JOIN saved s ON s.file_id = f.id
+     WHERE f.status = 'done' AND f.id NOT LIKE 'local:%'
+     GROUP BY f.folder ORDER BY last DESC`);
+  const marks = await d.getAllAsync<{ k: string; v: string }>("SELECT k, v FROM meta WHERE k LIKE 'checked@%'");
+  const at = new Map(marks.map((m) => [m.k.slice(8), m.v]));
+  return rows.map((r) => ({ ...r, checkedAt: at.get(r.folder) || null }));
+}
+
+export type CheckPhoto = { fileId: string; kind: string; faces: number[]; person: string; faceId: number | null; assetId: string | null };
+
+/** 一個活動裡：已經存的照片、判斷沒有孩子（有人臉）的照片 */
+export async function checkFolder(folder: string): Promise<{ saved: CheckPhoto[]; missed: CheckPhoto[] }> {
+  const d = await db();
+  const files = await d.getAllAsync<{ id: string; kind: string; asset_id: string | null }>(
+    `SELECT f.id, f.kind, s.asset_id FROM files f LEFT JOIN saved s ON s.file_id = f.id
+     WHERE f.folder = ? AND f.status = 'done' AND f.nfaces > 0 ORDER BY f.name`, folder);
+  const decs = await d.getAllAsync<{ file_id: string; person: string; kind: string; score: number; face_id: number }>(
+    `SELECT d.file_id, d.person, d.kind, d.score, d.face_id FROM decisions2 d JOIN files f ON f.id = d.file_id WHERE f.folder = ?
+     ORDER BY d.score DESC`, folder);
+  const faces = await d.getAllAsync<{ id: number; file_id: string }>(
+    'SELECT fc.id, fc.file_id FROM faces fc JOIN files f ON f.id = fc.file_id WHERE f.folder = ? ORDER BY fc.w * fc.h DESC', folder);
+  const facesOf = new Map<string, number[]>();
+  for (const f of faces) { const a = facesOf.get(f.file_id) || []; a.push(f.id); facesOf.set(f.file_id, a); }
+  const best = new Map<string, { person: string; face_id: number; kind: string }>();
+  for (const x of decs) {
+    const b = best.get(x.file_id);
+    if (!b || (x.kind === 'match' && b.kind !== 'match')) best.set(x.file_id, x);
+  }
+  const saved: CheckPhoto[] = [], missed: CheckPhoto[] = [];
+  for (const f of files) {
+    const b = best.get(f.id);
+    const item = { fileId: f.id, kind: f.kind, faces: facesOf.get(f.id) || [], person: b?.person || '', faceId: b?.face_id ?? null, assetId: f.asset_id };
+    if (f.asset_id) saved.push(item);
+    else if (!b) missed.push(item);
+  }
+  return { saved, missed };
+}
+
+export async function setChecked(folder: string) {
+  await setMeta(`checked@${folder}`, now());
+}
+
+/** 家長說存錯了：從「已存」拿掉（手機相簿裡的那張由畫面另外刪） */
+export async function unsave(fileIds: string[]) {
+  const d = await db();
+  for (const id of fileIds) await d.runAsync('DELETE FROM saved WHERE file_id = ?', id);
+}

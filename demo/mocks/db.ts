@@ -111,3 +111,20 @@ export async function photosInfo(ids: string[]): Promise<PhotoInfo[]> {
 export async function uploadedSince(folders: string[], _since: string) {
   return folders.map((f, i) => ({ folder: f, n: i ? 18 : 32, last: today + ' 10:31:00' }));
 }
+
+/* 核對 */
+export type CheckFolder = { folder: string; total: number; saved: number; review: number; missed: number; last: string; checkedAt: string | null };
+export type CheckPhoto = { fileId: string; kind: string; faces: number[]; person: string; faceId: number | null; assetId: string | null };
+export async function checkFolders(): Promise<CheckFolder[]> {
+  const g = new Map<string, number>();
+  for (const r of SAVED.map(savedRow)) g.set(r.folder, (g.get(r.folder) || 0) + 1);
+  return [...g].map(([folder, n], i) => ({ folder, total: n * 3 + 5, saved: n, review: i ? 0 : 2, missed: n + 4, last: `2026-10-${18 - i * 3}`, checkedAt: meta['checked@' + folder] || (i === 1 ? '2026-10-16' : null) }));
+}
+export async function checkFolder(folder: string) {
+  const rows = SAVED.map(savedRow).filter((r) => r.folder === folder);
+  const saved = rows.map((r) => ({ fileId: r.file_id, kind: 'photo', faces: [1], person: '', faceId: 1, assetId: r.asset_id }));
+  const missed = SAVED.map(savedRow).slice(0, 7).map((r, i) => ({ fileId: r.file_id, kind: 'photo', faces: i % 3 ? [1] : [1, 2, 3], person: '', faceId: null, assetId: null }));
+  return { saved, missed };
+}
+export async function setChecked(folder: string) { meta['checked@' + folder] = now(); }
+export async function unsave(_ids: string[]) {}

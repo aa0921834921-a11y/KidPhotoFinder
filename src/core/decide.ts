@@ -45,8 +45,19 @@ export function topkMean(sims: number[], k = 2): number {
 
 const simsTo = (e: Float32Array, set: Float32Array[]) => set.map((g) => dot(e, g));
 
-export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label[], matchThr: number,
-  reviewThr: number): { decisions: Map<string, Decision>; stats: Record<string, number> } {
+/** 算很久的時候，每隔一下讓畫面喘口氣（不然判斷時按什麼都沒反應） */
+function makeYield(ms = 12) {
+  let last = Date.now();
+  return async () => {
+    if (Date.now() - last < ms) return;
+    await new Promise((r) => setTimeout(r, 0));
+    last = Date.now();
+  };
+}
+
+export async function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label[], matchThr: number,
+  reviewThr: number): Promise<{ decisions: Map<string, Decision>; stats: Record<string, number> }> {
+  const breathe = makeYield();
   const decisions = new Map<string, Decision>();
   if (!faces.length || !refFeats.length) return { decisions, stats: { confirmed: 0 } };
   const idxOf = new Map<number, number>();
@@ -58,7 +69,8 @@ export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label
   const trusted = posLab.filter((l) => top2(simsTo(l.emb, refFeats)) >= reviewThr - TRUST_SLACK);
   const usedPos = trusted.slice(-MAX_CONFIRMED);
   const gallery = [...refFeats, ...usedPos.map((l) => l.emb)];
-  const sP = faces.map((f) => top2(simsTo(f.emb, gallery)));
+  const sP: number[] = new Array(faces.length);
+  for (let i = 0; i < faces.length; i++) { sP[i] = top2(simsTo(faces[i].emb, gallery)); await breathe(); }
 
   // 合照唯一性 -> 自動「不是」
   const byImage = new Map<string, number[]>();
@@ -86,7 +98,8 @@ export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label
     const sN = topkMean(sims, 2);
     return base - Math.max(0, sN - base + NEG_MARGIN);
   };
-  const s = sP.map((v, i) => (v >= reviewThr ? penalized(i, v) : v));
+  const s: number[] = new Array(faces.length);
+  for (let i = 0; i < faces.length; i++) { s[i] = sP[i] >= reviewThr ? penalized(i, sP[i]) : sP[i]; await breathe(); }
 
   // 從家長的答案學「待確認」的下限
   let effReview = reviewThr;
@@ -99,7 +112,7 @@ export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label
     return penalized(i, top2(sims));
   };
   const yesS: number[] = [];
-  for (const f of posIds) { const i = idxOf.get(f); if (i !== undefined) yesS.push(rawYes(i)); }
+  for (const f of posIds) { const i = idxOf.get(f); if (i !== undefined) yesS.push(rawYes(i)); await breathe(); }
   if (yesS.length) {
     const lowYes = Math.min(...yesS);
     let noBelow = 0;
@@ -113,16 +126,18 @@ export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label
   if (usedPos.length >= AUTO_MIN_YES && negLab.length >= AUTO_MIN_NO) {
     const known = [...usedPos.map((l) => ({ e: l.emb, id: l.faceId, yes: true })),
       ...negLab.map((l) => ({ e: l.emb, id: l.faceId, yes: false }))];
-    faces.forEach((f, i) => {
-      if (s[i] < Math.max(effReview, matchThr - AUTO_NEAR) || s[i] >= matchThr || posIds.has(f.id) || negIds.has(f.id)) return;
+    for (let i = 0; i < faces.length; i++) {
+      const f = faces[i];
+      await breathe();
+      if (s[i] < Math.max(effReview, matchThr - AUTO_NEAR) || s[i] >= matchThr || posIds.has(f.id) || negIds.has(f.id)) continue;
       const near = known.filter((k) => k.id !== f.id).map((k) => ({ sim: dot(f.emb, k.e), yes: k.yes }))
         .sort((x, y) => y.sim - x.sim);
       const top = near.slice(0, AUTO_K);
-      if (top.length < AUTO_K || !top.every((k) => k.yes) || top[0].sim < matchThr || top[AUTO_K - 1].sim < matchThr - AUTO_NEAR) return;
+      if (top.length < AUTO_K || !top.every((k) => k.yes) || top[0].sim < matchThr || top[AUTO_K - 1].sim < matchThr - AUTO_NEAR) continue;
       const firstNo = near.find((k) => !k.yes);
-      if (firstNo && top[0].sim - firstNo.sim < AUTO_GAP) return;
+      if (firstNo && top[0].sim - firstNo.sim < AUTO_GAP) continue;
       s[i] = matchThr; autoYes++;
-    });
+    }
   }
 
   // 家長的標記最優先

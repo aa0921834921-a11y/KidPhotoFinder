@@ -6,12 +6,12 @@ import { tr, useLang } from '../../i18n';
 import * as DB from '../../services/db';
 import { useApp } from '../../services/state';
 import { Polaroid } from '../../ui/art';
-import { art, DashLine, Empty, HeadCard, Paper, useContentWidth } from '../../ui/kit';
+import { art, DashLine, Empty, HeadCard, Link, Paper, useContentWidth } from '../../ui/kit';
 import { makeStyles, radii, useTheme, type Theme } from '../../ui/theme';
 import { usePreview } from '../../ui/usePreview';
 
 type Row = Awaited<ReturnType<typeof DB.savedByFolder>>[number];
-type Section = { title: string; sub: string; data: Row[][]; n: number };
+type Section = { title: string; sub: string; data: Row[][]; n: number; folder: string };
 const TILT = [0, 1.6, -1.2, 0.6];
 
 function Thumb({ r, size, i }: { r: Row; size: number; i: number }) {
@@ -28,12 +28,16 @@ export default function Album() {
   const w = useContentWidth(16);
   const [sections, setSections] = useState<Section[]>([]);
   const [total, setTotal] = useState(0);
+  const [unchecked, setUnchecked] = useState(0);
   const cols = w > 560 ? 5 : 3;
   const gap = t.tilt ? 10 : 6;
   const plain = t.id === 'minimal' || t.id === 'starry';
   const size = Math.floor((w - 28 - (cols - 1) * gap) / cols) - (plain ? 0 : 10);
 
   useFocusEffect(useCallback(() => {
+    // 最近兩週老師上傳、還沒核對的活動
+    const since = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+    DB.checkFolders().then((all) => setUnchecked(all.filter((x) => !x.checkedAt && x.last >= since).length)).catch(() => {});
     DB.savedByFolder().then((rows) => {
       const g = new Map<string, Row[]>();
       for (const r of rows) {
@@ -46,7 +50,7 @@ export default function Album() {
         if (parts[0] === '手機相簿') parts[0] = tr('album.phone'); // LINE 下載的照片（資料庫裡存的是中文的固定名稱）
         const data: Row[][] = [];
         for (let i = 0; i < list.length; i += cols) data.push(list.slice(i, i + cols));
-        return { title: parts[parts.length - 1] || folder, sub: parts.slice(0, -1).join(' / '), data, n: list.length };
+        return { title: parts[parts.length - 1] || folder, sub: parts.slice(0, -1).join(' / '), data, n: list.length, folder };
       }));
     });
   }, [version, cols, lang]));
@@ -56,7 +60,10 @@ export default function Album() {
       <SectionList
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={<View style={{ marginBottom: 16 }}><HeadCard title={tr('album.title')} sub={tr('album.sub', { n: total })} /></View>}
+        ListHeaderComponent={<View style={{ marginBottom: 16, gap: 10 }}>
+          <HeadCard title={tr('album.title')} sub={tr('album.sub', { n: total })} />
+          {total ? <Link title={tr('chk.album', { n: unchecked })} onPress={() => router.push('/check')} style={{ fontSize: 14, alignSelf: 'flex-end' }} /> : null}
+        </View>}
         ListEmptyComponent={<Empty title={tr('album.emptyTitle')} body={tr('album.emptyBody')} />}
         sections={sections}
         keyExtractor={(row) => row[0].file_id}
@@ -67,6 +74,8 @@ export default function Album() {
               <View style={s.ghRow}>
                 <Text style={s.ghTitle}>{t.id !== 'minimal' ? <Text style={{ color: t.c.accent }}>{t.id === 'starry' ? '✦ ' : '✿ '}</Text> : null}{section.title}</Text>
                 <Text style={s.ghN}>{tr('common.photos', { n: section.n })}</Text>
+                <View style={{ flex: 1 }} />
+                {!section.folder.startsWith('手機相簿') ? <Link title={tr('chk.btn')} onPress={() => router.push({ pathname: '/check', params: { folder: section.folder } })} style={{ fontSize: 13 }} /> : null}
               </View>
               {section.sub ? <Text style={s.ghSub}>📁 {section.sub}</Text> : null}
             </View>
