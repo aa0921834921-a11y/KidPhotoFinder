@@ -11,6 +11,12 @@ export const MAX_CONFIRMED = 80;
 export const TRUST_SLACK = 0.03;
 export const FLOOR_EVIDENCE = 8;
 export const NEG_MARGIN = 0.05;
+/** 確認過「是」的臉夠多之後，跟它們非常像的待確認照片就直接存 */
+export const AUTO_MIN_YES = 20;      // 至少要有這麼多張確認過的「是」
+export const AUTO_NEAR = 0.04;       // 只處理差一點點就「確定」的臉
+export const AUTO_K = 7;             // 最像的這麼多張答過的臉都要是「是」
+export const AUTO_MIN_NO = 5;        // 也要按過幾次「不是」，才知道同學大概多像（不然不自動存）
+export const AUTO_GAP = 0.08;        // 最像的「是」要比最像的「不是」明顯更像
 
 export const THRESHOLDS: Record<string, [number, number]> = {
   loose: [0.44, 0.36],
@@ -101,6 +107,24 @@ export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label
     if (noBelow >= FLOOR_EVIDENCE) effReview = Math.min(matchThr - 0.01, Math.max(reviewThr, lowYes - 0.015));
   }
 
+  // 確認過很多張「是」之後：待確認的臉，如果最像它的那幾張「家長答過的臉」全部都是「是」，就直接存
+  // （拿家長自己的答案來比：像的都是自己小孩、沒有一張是同學，才算數）
+  let autoYes = 0;
+  if (usedPos.length >= AUTO_MIN_YES && negLab.length >= AUTO_MIN_NO) {
+    const known = [...usedPos.map((l) => ({ e: l.emb, id: l.faceId, yes: true })),
+      ...negLab.map((l) => ({ e: l.emb, id: l.faceId, yes: false }))];
+    faces.forEach((f, i) => {
+      if (s[i] < Math.max(effReview, matchThr - AUTO_NEAR) || s[i] >= matchThr || posIds.has(f.id) || negIds.has(f.id)) return;
+      const near = known.filter((k) => k.id !== f.id).map((k) => ({ sim: dot(f.emb, k.e), yes: k.yes }))
+        .sort((x, y) => y.sim - x.sim);
+      const top = near.slice(0, AUTO_K);
+      if (top.length < AUTO_K || !top.every((k) => k.yes) || top[0].sim < matchThr || top[AUTO_K - 1].sim < matchThr - AUTO_NEAR) return;
+      const firstNo = near.find((k) => !k.yes);
+      if (firstNo && top[0].sim - firstNo.sim < AUTO_GAP) return;
+      s[i] = matchThr; autoYes++;
+    });
+  }
+
   // 家長的標記最優先
   for (const f of posIds) { const i = idxOf.get(f); if (i !== undefined) s[i] = 1; }
   for (const f of negIds) { const i = idxOf.get(f); if (i !== undefined) s[i] = -1; }
@@ -111,7 +135,7 @@ export function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label
     if (sc >= matchThr) decisions.set(k, { kind: 'match', score: sc, faceId: fid });
     else if (sc >= effReview) decisions.set(k, { kind: 'review', score: sc, faceId: fid });
   }
-  return { decisions, stats: { confirmed: posLab.length, trusted: trusted.length, autoNeg: auto.length, reviewFloor: effReview } };
+  return { decisions, stats: { confirmed: posLab.length, trusted: trusted.length, autoNeg: auto.length, autoYes, reviewFloor: effReview } };
 }
 
 /* ---------------------------------------------------------------- 參考照片 */

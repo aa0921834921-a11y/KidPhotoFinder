@@ -47,6 +47,8 @@ export function db(): Promise<SQLite.SQLiteDatabase> {
           INSERT OR IGNORE INTO decisions2(file_id, person, kind, score, face_id) SELECT file_id, '', kind, score, face_id FROM decisions;
           INSERT OR REPLACE INTO meta(k, v) VALUES ('labels_v2', '1');`);
       }
+      // 清掉指向已經不存在的臉的判斷（舊版留下的，會讓同一張一直被問）
+      await d.execAsync('DELETE FROM decisions2 WHERE face_id IS NOT NULL AND face_id NOT IN (SELECT id FROM faces)').catch(() => {});
       return d;
     })();
   }
@@ -216,7 +218,7 @@ export async function upsertListed(files: Omit<FileRow, 'status' | 'nfaces' | 'w
         const changed = (f.md5 && old.md5 && f.md5 !== old.md5) || (!f.md5 && f.size !== old.size);
         await d.runAsync('UPDATE files SET name = ?, folder = ?, seen_at = ?' + (changed ? ", status = 'new', md5 = ?, size = ?" : '') + ' WHERE id = ?',
           ...(changed ? [f.name, f.folder, t, f.md5, f.size, f.id] : [f.name, f.folder, t, f.id]));
-        if (changed) { fresh++; await d.runAsync('DELETE FROM faces WHERE file_id = ?', f.id); }
+        if (changed) { fresh++; await d.runAsync('DELETE FROM faces WHERE file_id = ?', f.id); await d.runAsync('DELETE FROM decisions2 WHERE file_id = ?', f.id); }
       }
     }
   });
@@ -248,6 +250,8 @@ export async function saveScan(fileId: string, faces: { frame: number; box: numb
   const d = await db();
   await d.withTransactionAsync(async () => {
     await d.runAsync('DELETE FROM faces WHERE file_id = ?', fileId);
+    // 舊的臉沒了，指向舊臉的判斷也要拿掉（不然「確認照片」會一直問同一張、按了也存不起來）
+    await d.runAsync('DELETE FROM decisions2 WHERE file_id = ?', fileId);
     for (const f of faces) {
       await d.runAsync('INSERT INTO faces(file_id, frame, x, y, w, h, emb) VALUES (?,?,?,?,?,?,?)',
         fileId, f.frame, f.box[0], f.box[1], f.box[2], f.box[3], embToBlob(f.emb));
@@ -287,7 +291,7 @@ export async function setLabel(faceId: number, label: 1 | -1 | 0, person = '') {
   const d = await db();
   if (!label) { await d.runAsync('DELETE FROM labels2 WHERE face_id = ? AND person = ?', faceId, person); return; }
   const f = await d.getFirstAsync<{ emb: Uint8Array }>('SELECT emb FROM faces WHERE id = ?', faceId);
-  if (!f) return;
+  if (!f) { await d.runAsync('DELETE FROM decisions2 WHERE face_id = ?', faceId); return; }
   await d.runAsync('INSERT OR REPLACE INTO labels2(face_id, person, label, emb, at) VALUES (?,?,?,?,?)', faceId, person, label, f.emb, now());
 }
 
@@ -336,7 +340,7 @@ export async function decisionsList(kind: 'match' | 'review'): Promise<ReviewIte
   const d = await db();
   const rows = await d.getAllAsync<ReviewItem>(
     `SELECT d.file_id AS fileId, d.face_id AS faceId, d.score, d.person, f.name, f.folder, f.kind FROM decisions2 d
-     JOIN files f ON f.id = d.file_id
+     JOIN files f ON f.id = d.file_id JOIN faces fc ON fc.id = d.face_id
      WHERE d.kind = ? AND NOT EXISTS (SELECT 1 FROM labels2 l WHERE l.face_id = d.face_id AND l.person = d.person)
      ORDER BY d.score ${kind === 'review' ? 'DESC' : 'ASC'}`, kind);
   const seen = new Set<number>();
@@ -349,6 +353,7 @@ export async function counts() {
   return {
     match: await one("SELECT COUNT(DISTINCT file_id) AS n FROM decisions2 WHERE kind = 'match'"),
     review: await one(`SELECT COUNT(DISTINCT face_id) AS n FROM decisions2 d WHERE kind = 'review'
+      AND EXISTS (SELECT 1 FROM faces fc WHERE fc.id = d.face_id)
       AND NOT EXISTS (SELECT 1 FROM labels2 l WHERE l.face_id = d.face_id AND l.person = d.person)`),
     saved: await one('SELECT COUNT(*) AS n FROM saved'),
     files: await one('SELECT COUNT(*) AS n FROM files'),
