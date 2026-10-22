@@ -13,7 +13,7 @@ import { analyze, downloadModel, loadImage, modelReady } from './recognizer';
 import { copyLocalToAlbum, isLocal } from './localClean';
 import { judgeAll, referenceFeatures } from './judge';
 import * as Notices from './notices';
-import { bump, getState, setState } from './state';
+import { bump, busy, getState, setState } from './state';
 import * as FG from '../../modules/kpf-foreground';
 
 const fgTitle = () => tr('scan.fgTitle');
@@ -32,7 +32,7 @@ export const requestStop = (hard = false) => {
 const PENDING = 'scan_pending';
 /** 上次在 App 裡按的整理，是不是因為 App 被關掉而沒做完 */
 export async function interruptedScan(): Promise<boolean> {
-  if (getState().running) return false;
+  if (busy()) return false;
   return (await DB.getMeta(PENDING).catch(() => null)) === '1';
 }
 
@@ -137,7 +137,7 @@ export function scheduleApply() {
 }
 
 export async function applyNow() {
-  if (getState().running) {
+  if (busy()) {
     // 正在找新照片：掃描每看 40 張會重新判斷（會用到你的答案）；掃描結束後再補套用一次，確保最後按的也算進去
     applyAfterScan = true;
     setState({ applying: false });
@@ -315,7 +315,7 @@ async function listOne(folder: DB.Folder, mode: 'manual' | 'background', opts: {
 const LIST_FRESH_MS = { resume: 24 * 3600e3, manual: 15 * 60e3, background: 3600e3 };
 
 export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity, opts: { resume?: boolean } = {}): Promise<ScanResult> {
-  if (getState().running) return { scanned: 0, saved: 0, review: 0, errors: 0, stopped: true };
+  if (busy()) return { scanned: 0, saved: 0, review: 0, errors: 0, stopped: true };
   const started = DB.now(), t0 = Date.now();
   cancel = false;
   hardCancel = false;

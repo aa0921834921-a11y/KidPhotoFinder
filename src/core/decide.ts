@@ -56,8 +56,7 @@ function makeYield(ms = 12) {
 }
 
 export async function decide(faces: FaceRow[], refFeats: Float32Array[], labels: Label[], matchThr: number,
-  reviewThr: number): Promise<{ decisions: Map<string, Decision>; stats: Record<string, number> }> {
-  const breathe = makeYield();
+  reviewThr: number, breathe: () => Promise<void> = makeYield()): Promise<{ decisions: Map<string, Decision>; stats: Record<string, number> }> {
   const decisions = new Map<string, Decision>();
   if (!faces.length || !refFeats.length) return { decisions, stats: { confirmed: 0 } };
   const idxOf = new Map<number, number>();
