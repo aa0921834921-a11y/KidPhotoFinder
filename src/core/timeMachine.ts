@@ -545,6 +545,25 @@ export function yearsAgo(k: number, lang: TMLang): string {
   }
 }
 
+/** 「多久以前」：今天、昨天、3 天前、2 週前、5 個月前、1 年前（同一天就說「去年的今天」） */
+export function since(day: string, lang: TMLang, today = new Date()): string {
+  const y = +day.slice(0, 4), m = +day.slice(5, 7), d = +day.slice(8, 10);
+  const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const days = Math.round((t0 - new Date(y, m - 1, d).getTime()) / 86400000);
+  if (days > 300 && today.getMonth() + 1 === m && today.getDate() === d) return yearsAgo(today.getFullYear() - y, lang);
+  const n = days < 7 ? days : days < 30 ? Math.floor(days / 7) : days < 365 ? Math.max(1, Math.floor(days / 30.44)) : Math.floor(days / 365.25);
+  const u = days < 7 ? 0 : days < 30 ? 1 : days < 365 ? 2 : 3;
+  if (days <= 0) return T.today[lang];
+  if (days === 1) return T.yesterday[lang];
+  switch (lang) {
+    case 'en': return `${n} ${['day', 'week', 'month', 'year'][u]}${n === 1 ? '' : 's'} ago`;
+    case 'id': return `${n} ${['hari', 'minggu', 'bulan', 'tahun'][u]} lalu`;
+    case 'vi': return `${n} ${['ngày', 'tuần', 'tháng', 'năm'][u]} trước`;
+    case 'zh-Hans': return `${n} ${['天', '周', '个月', '年'][u]}前`;
+    default: return `${n} ${['天', '週', '個月', '年'][u]}前`;
+  }
+}
+
 /** 輸入框裡輪流出現的例子 */
 export const EXAMPLES: Labels[] = [
   L('去年聖誕節', '去年圣诞节', 'Christmas last year', 'Natal tahun lalu', 'Giáng sinh năm ngoái'),

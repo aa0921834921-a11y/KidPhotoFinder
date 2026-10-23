@@ -14,51 +14,18 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { bestPhotos } from '../core/events';
 import * as TM from '../core/timeMachine';
 import { getLang, tr, useLang } from '../i18n';
 import * as DB from '../services/db';
 import { useApp } from '../services/state';
+import { GachaStage } from '../ui/gacha/GachaStage';
+import { IMG as GACHA } from '../ui/gacha/images';
 import { cardStyle, Empty, H1, Icon, Link, P, Paper, SectionTitle, useContentWidth } from '../ui/kit';
+import { Photo, useBest, type Info } from '../ui/memPhoto';
 import { makeStyles, useTheme, type Theme } from '../ui/theme';
-import { usePreview } from '../ui/usePreview';
-
-type Info = DB.PhotoInfo;
 const lang = () => getLang() as TM.TMLang;
 
 /* ---------------------------------------------------------------- 照片 */
-
-/** 照片：Android 直接用手機相簿裡的那張（快、不用網路）；不行再用雲端硬碟的縮圖。臉放在中間 */
-function Photo({ id, info, size, radius = 6, style }: { id: string; info?: Info | null; size: number; radius?: number; style?: ViewStyle }) {
-  const t = useTheme();
-  const [bad, setBad] = useState(false);
-  const local = !bad && info && Platform.OS === 'android' && info.asset_id?.startsWith('content://') ? info.asset_id : null;
-  const preview = usePreview(local ? null : id, size > 200 ? 768 : 384);
-  const uri = local || preview;
-  const pos = info && info.fx != null && info.fy != null && info.fw && info.fh && info.w && info.h
-    ? { left: `${Math.round(((info.fx + info.fw / 2) / info.w) * 100)}%`, top: `${Math.round(((info.fy + info.fh * 0.6) / info.h) * 100)}%` }
-    : { left: '50%', top: '40%' };
-  return (
-    <View style={[{ width: size, height: size, borderRadius: radius, overflow: 'hidden', backgroundColor: t.c.line }, style]}>
-      {uri ? <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" contentPosition={pos as never} transition={200} onError={() => setBad(true)} /> : null}
-    </View>
-  );
-}
-
-/** 一個活動最好看的三張（孩子的臉最清楚的在最上面） */
-function useBest(ev: TM.TMEvent | null): Info[] {
-  const [rows, setRows] = useState<Info[]>([]);
-  useEffect(() => {
-    let alive = true;
-    setRows([]);
-    if (!ev) return;
-    DB.photosInfo(ev.photos.slice(0, 40).map((p) => p.id))
-      .then((r) => { if (alive) setRows(bestPhotos(r, 3).length ? bestPhotos(r, 3) : r.slice(0, 3)); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [ev]);
-  return rows;
-}
 
 /** 三張照片疊成一疊（像桌上散開的拍立得） */
 function Fan({ ev, size }: { ev: TM.TMEvent; size: number }) {
@@ -169,72 +136,40 @@ function EventSheet({ ev, onClose }: { ev: TM.TMEvent | null; onClose: () => voi
 
 /* ---------------------------------------------------------------- 回憶扭蛋 */
 
-const CAPS = ['#F4B6B6', '#A9D3C2', '#F7D58C', '#B9C8F2', '#F3C3E2', '#C9E3A6'];
-
+/** 回憶扭蛋的卡片：左邊是扭蛋機，點了打開扭蛋機的動畫視窗；右邊是上一次抽到的回憶 */
 function Gacha({ events, onOpen }: { events: TM.TMEvent[]; onOpen: (e: TM.TMEvent) => void }) {
   const t = useTheme();
   const s = useStyles();
   useLang();
   const [pick, setPick] = useState<TM.TMEvent | null>(null);
-  const [busy, setBusy] = useState(false);
-  const shake = useRef(new Animated.Value(0)).current;
-  const drop = useRef(new Animated.Value(0)).current;
-  const show = useRef(new Animated.Value(0)).current;
-  const spin = () => {
-    if (busy || !events.length) return;
-    setBusy(true);
-    shake.setValue(0); drop.setValue(0);
-    Animated.parallel([Animated.timing(show, { toValue: 0, duration: 150, useNativeDriver: true })]).start();
-    Animated.sequence([
-      Animated.timing(shake, { toValue: 1, duration: 520, easing: Easing.linear, useNativeDriver: true }),
-      Animated.timing(drop, { toValue: 1, duration: 380, easing: Easing.bounce, useNativeDriver: true }),
-    ]).start(() => {
-      setPick(TM.gacha(events, pick?.folder || null));
-      Animated.spring(show, { toValue: 1, friction: 6, tension: 70, useNativeDriver: true }).start();
-      setBusy(false);
-    });
-  };
-  const rot = shake.interpolate({ inputRange: [0, 0.2, 0.4, 0.6, 0.8, 1], outputRange: ['0deg', '-7deg', '7deg', '-5deg', '4deg', '0deg'] });
-  const fall = drop.interpolate({ inputRange: [0, 1], outputRange: [-46, 0] });
-  const fade = drop.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 1, 1] });
+  const [show, setShow] = useState(false);
+  const open = () => setShow(true);
   return (
     <View style={[cardStyle(t), s.box]}>
       <SectionTitle>{tr('tm.gacha')}</SectionTitle>
       <P muted style={{ fontSize: 13 }}>{tr('tm.gachaSub')}</P>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8 }}>
-        <Pressable onPress={spin} accessibilityRole="button" accessibilityLabel={tr('tm.spin')} style={{ alignItems: 'center' }}>
-          <Animated.View style={[s.dome, { transform: [{ rotate: rot }] }]}>
-            {CAPS.map((c, i) => (
-              <View key={c} style={[s.cap, { backgroundColor: c, left: [14, 44, 70, 24, 54, 36][i], top: [44, 52, 38, 20, 22, 6][i] }]} />
-            ))}
-            <View style={s.shine} />
-          </Animated.View>
-          <View style={[s.base, { backgroundColor: t.c.accent }]}>
-            <View style={s.slot} />
-            <Animated.View style={[s.capOut, { backgroundColor: CAPS[(pick?.name.length || 0) % CAPS.length], opacity: fade, transform: [{ translateY: fall }] }]} />
-          </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 }}>
+        <Pressable onPress={open} accessibilityRole="button" accessibilityLabel={tr('gacha.machine')}
+          style={({ pressed }) => [{ transform: [{ scale: pressed ? 0.97 : 1 }] }]}>
+          <Image source={GACHA.thumb} style={{ width: 122, height: 151 }} contentFit="contain" />
         </Pressable>
         <View style={{ flex: 1, gap: 8 }}>
           {pick ? (
-            <Animated.View style={{ opacity: show, transform: [{ scale: show.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }] }}>
-              <Pressable onPress={() => onOpen(pick)} style={({ pressed }) => [{ gap: 3 }, pressed && { opacity: 0.8 }]} accessibilityRole="button">
-                <Text style={s.cardTitle} numberOfLines={2}>{pick.name}</Text>
-                <Text style={s.cardDate}>{TM.fmtDay(pick.day, lang())}　·　{tr('common.photos', { n: pick.photos.length })}</Text>
-                <Text style={s.link}>{tr('tm.view')} ›</Text>
-              </Pressable>
-            </Animated.View>
-          ) : null}
-          <Pressable onPress={spin} disabled={busy} style={({ pressed }) => [s.spinBtn, { backgroundColor: t.c.accentWash, borderColor: t.c.accent }, pressed && { opacity: 0.8 }]}
+            <Pressable onPress={() => onOpen(pick)} style={({ pressed }) => [{ gap: 3 }, pressed && { opacity: 0.8 }]} accessibilityRole="button">
+              <Fan ev={pick} size={64} />
+              <Text style={s.cardTitle} numberOfLines={2}>{pick.name}</Text>
+              <Text style={s.cardDate}>{TM.fmtDay(pick.day, lang())}　·　{tr('common.photos', { n: pick.photos.length })}</Text>
+              <Text style={s.link}>{tr('tm.view')} ›</Text>
+            </Pressable>
+          ) : <P muted style={{ fontSize: 13.5 }}>{tr('gacha.cardHint')}</P>}
+          <Pressable onPress={open} style={({ pressed }) => [s.spinBtn, { backgroundColor: t.c.accentWash, borderColor: t.c.accent }, pressed && { opacity: 0.8 }]}
             accessibilityRole="button">
             <Text style={[s.spinText, { color: t.c.accentDeep }]}>{pick ? tr('tm.again') : tr('tm.spin')}</Text>
           </Pressable>
         </View>
       </View>
-      {pick ? (
-        <Animated.View style={{ alignItems: 'center', marginTop: 10, opacity: show }}>
-          <Pressable onPress={() => onOpen(pick)} accessibilityRole="imagebutton" accessibilityLabel={pick.name}><Fan ev={pick} size={150} /></Pressable>
-        </Animated.View>
-      ) : null}
+      <GachaStage visible={show} events={events} onClose={() => setShow(false)} onPicked={setPick}
+        onOpenEvent={(e) => { setShow(false); onOpen(e); }} />
     </View>
   );
 }
@@ -460,16 +395,6 @@ const useStyles = makeStyles((t: Theme) => {
     box: { padding: 16, gap: 4 },
     otdHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
     otdTitle: { ...t.title, fontSize: 18, color: c.chapTitle },
-    // 扭蛋機
-    dome: {
-      width: 104, height: 84, borderTopLeftRadius: 52, borderTopRightRadius: 52, borderBottomLeftRadius: 14, borderBottomRightRadius: 14,
-      borderWidth: 3, borderColor: t.dark ? '#5B66A8' : '#E5D3C3', backgroundColor: t.dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.75)', overflow: 'hidden',
-    },
-    cap: { position: 'absolute', width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: 'rgba(255,255,255,0.85)' },
-    shine: { position: 'absolute', left: 14, top: 10, width: 14, height: 30, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.55)', transform: [{ rotate: '24deg' }] },
-    base: { width: 92, height: 46, marginTop: -2, borderBottomLeftRadius: 16, borderBottomRightRadius: 16, borderTopLeftRadius: 6, borderTopRightRadius: 6, alignItems: 'center', justifyContent: 'center' },
-    slot: { width: 34, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.22)' },
-    capOut: { position: 'absolute', top: 12, width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#fff' },
     spinBtn: { alignSelf: 'flex-start', borderRadius: 999, borderWidth: 1.5, paddingVertical: 9, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center' },
     spinText: { ...t.round, fontSize: 15 },
     link: { ...t.round, fontSize: 14, color: c.accentDeep, marginTop: 2 },
