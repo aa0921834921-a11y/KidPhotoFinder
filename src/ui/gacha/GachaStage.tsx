@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mix as runMix, REST, SET, type Cap, type Mix } from '../../core/gacha';
-import { ART, CAP_FRAC, POLAROID, SCENE, type Rect } from '../../core/gachaArt';
+import { ART, CAP_FRAC, POLAROID, SCENE, SEAM, type Rect } from '../../core/gachaArt';
 import { choreography, CUES, dense, PHASE, PHASE_REDUCED, TWINKLES, wobble, type PhaseName, type Show, type Track } from '../../core/gachaShow';
 import * as TM from '../../core/timeMachine';
 import { getLang, tr, useLang } from '../../i18n';
@@ -52,8 +52,8 @@ function layout(W: number, H: number, top: number, bottom: number) {
   const headerH = 54, hintH = 40;
   const availTop = top + headerH;
   const availH = Math.max(200, H - availTop - bottom - hintH);
-  // 寬度用蕾絲墊的寬來算（兩邊的花葉可以稍微超出畫面），機器才夠大
-  const s = Math.min((W - 8) / 1700, availH / SCENE.h, 0.34);
+  // 整個畫面（兩邊的花、蕾絲墊）都要放得進螢幕，不能被切掉
+  const s = Math.min((W - 12) / SCENE.w, availH / SCENE.h, 0.34);
   const sw = SCENE.w * s, sh = SCENE.h * s;
   const left = (W - sw) / 2;
   const sceneTop = availTop + Math.max(0, (availH - sh) / 2) * 0.7;
@@ -97,6 +97,9 @@ function loopShape(v: Animated.Value, f: (u: number) => number, n = 48) {
 
 /* ---------------------------------------------------------------- 畫面 */
 
+/** 這次打開 App 期間，扭蛋機最後停下來的樣子 */
+let lastState: Cap[] | null = null;
+
 function Stage({ events, onClose, onPicked, onOpenEvent }: {
   events: TM.TMEvent[]; onClose: () => void; onPicked: (e: TM.TMEvent) => void; onOpenEvent: (e: TM.TMEvent) => void;
 }) {
@@ -111,7 +114,8 @@ function Stage({ events, onClose, onPicked, onOpenEvent }: {
   const [phase, setPhase] = useState<PhaseName>('IDLE');
   const [reduced, setReduced] = useState(false);
   const [pick, setPick] = useState<TM.TMEvent | null>(null);
-  const rest: Cap[] = REST;
+  // 上次關掉時扭蛋停的樣子（再打開時接著用，每次掉出來的顏色才會不一樣）
+  const [rest] = useState<Cap[]>(() => lastState || REST);
   const [run, setRun] = useState<{ n: number; mix: Mix | null; show: Show } | null>(null);
   const tl = useRef(new Animated.Value(0)).current;
   const idle = useRef(new Animated.Value(0)).current;
@@ -165,6 +169,7 @@ function Stage({ events, onClose, onPicked, onOpenEvent }: {
     let m: Mix | null = null;
     if (!reduced) {
       m = next.current || runMix(run?.mix?.end || rest, seed);
+      lastState = m.end;
       next.current = null;
     }
     const r = m ? SET[m.out].r : 136;
@@ -248,6 +253,7 @@ function Stage({ events, onClose, onPicked, onOpenEvent }: {
       orbitBO: interp(tl, tk.orbitBO), orbitBR: interpDeg(tl, tk.orbitBR), orbitBS: interp(tl, tk.orbitBS, (v) => v, 1),
       motionO: interp(tl, tk.motionO), motionS: interp(tl, tk.motionS, (v) => v, 1),
       raysO: Animated.multiply(interp(tl, tk.raysO), fade), raysS: interp(tl, tk.raysS, (v) => v, 1), raysR: interpDeg(tl, tk.raysR),
+      flashO: interp(tl, tk.flashO), flashS: interp(tl, tk.flashS, (v) => v, 1),
     };
   }, [show, mixNow, s, tl, fade, L.wP, L.hP, L.pol.cx, L.pol.cy]);
 
@@ -297,22 +303,28 @@ function Stage({ events, onClose, onPicked, onOpenEvent }: {
 
   /* ---------- 掉出來的那顆（兩個半殼合起來） */
   const capRot = useMemo(() => toDeg(A.capRn), [A]);
-  const capsule = (opacity: AV, key: string, withShift: boolean) => {
+  const capsule = (opacity: AV, key: string, open: boolean) => {
     const size = A.capPx;
     const half = (src: number, dx: N, dy: N, r: N) => (
       <Animated.Image source={src} fadeDuration={0} style={{
         position: 'absolute', left: 0, top: 0, width: size, height: size,
-        // 容器在打開時放大 1.35 倍，位移要除回來
-        transform: withShift
-          ? [{ translateX: Animated.multiply(dx, s / 1.35) as never }, { translateY: Animated.multiply(dy, s / 1.35) as never }, { rotate: toDeg(Animated.add(A.capRn, r)) as never }]
-          : [{ rotate: capRot as never }],
+        // 容器在打開時放大 1.35 倍，位移要除回來；兩半合起來的接縫轉 SEAM 度，才會跟整顆扭蛋的接縫對齊
+        transform: [{ translateX: Animated.multiply(dx, s / 1.35) as never }, { translateY: Animated.multiply(dy, s / 1.35) as never },
+          { rotate: toDeg(Animated.add(A.capRn, Animated.add(r, SEAM))) as never }],
       }} />
     );
     return (
       <Animated.View key={key} pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: size, height: size, opacity: opacity as never,
         transform: [{ translateX: A.capX as never }, { translateY: A.capY as never }, { scale: A.capS as never }, { scaleY: A.capSY as never }] }}>
-        {half(IMG.half[outKind].l, A.loDX, A.loDY, A.loR)}
-        {half(IMG.half[outKind].u, A.upDX, A.upDY, A.upR)}
+        {open ? (
+          <>
+            {half(IMG.half[outKind].l, A.loDX, A.loDY, A.loR)}
+            {half(IMG.half[outKind].u, A.upDX, A.upDY, A.upR)}
+          </>
+        ) : (
+          // 掉出來、滾動的時候就是罩子裡的那一顆（看得到裡面的愛心、照片小圖）
+          <Animated.Image source={IMG.cap[outKind]} fadeDuration={0} style={{ position: 'absolute', left: 0, top: 0, width: size, height: size, transform: [{ rotate: capRot as never }] }} />
+        )}
       </Animated.View>
     );
   };
@@ -495,6 +507,10 @@ function Stage({ events, onClose, onPicked, onOpenEvent }: {
             </Animated.View>
             {/* 打開的兩個半殼（在拍立得前面，像參考圖） */}
             {!reduced ? openCap : null}
+            {!reduced && show ? (() => {
+              const g = A.capPx * 2.9;
+              return <Animated.Image source={IMG.flash} fadeDuration={0} style={{ position: 'absolute', left: X(show.spot.x) - g / 2, top: Y(show.spot.y) - g / 2, width: g, height: g, opacity: A.flashO, transform: [{ scale: A.flashS }] }} />;
+            })() : null}
             {bits}
           </View>
         </View>

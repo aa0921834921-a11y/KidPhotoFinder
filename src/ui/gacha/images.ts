@@ -42,6 +42,7 @@ export const IMG = {
   heart2: require('../../../assets/gacha/heart2.webp'),
   fx: require('../../../assets/gacha/fx.webp'),
   rays: require('../../../assets/gacha/rays.webp'),
+  flash: require('../../../assets/gacha/flash.webp'),
   orbit: require('../../../assets/gacha/orbit.webp'),
   arrows: require('../../../assets/gacha/arrows.webp'),
   motion: require('../../../assets/gacha/motion.webp'),

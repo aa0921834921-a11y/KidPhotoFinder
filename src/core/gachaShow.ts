@@ -146,8 +146,9 @@ export function choreography(p: ShowInput): Show {
     [2655, land - 20, E.outQuad], [2700, land, E.inQuad], [2790, land], [3060, spot.y, E.inOutCubic]];
   tracks.capS = [[1990, 0.56], [2140, 0.68, E.outQuad], [2260, 1, E.outQuad], [2790, 1], [3060, 1.35, E.inOutCubic]];
   tracks.capSY = [[2462, 1], [2478, 0.9], [2520, 1.03], [2550, 1], [2606, 1], [2618, 0.95], [2650, 1]];
-  tracks.capR = [[1990, 0], [2140, 30], [2260, 90], [2470, 220], [2610, 300], [2700, 345], [2790, 362, E.outQuad], [3060, 362],
-    [3078, 355], [3096, 369], [3114, 358], [3130, 362]];
+  // 滾動：掉出來一路滾兩圈，飛到前面時再轉一圈（最後角度回到原位，接縫才對得上）
+  tracks.capR = [[1990, 0], [2140, 70], [2260, 200], [2470, 460], [2610, 600], [2700, 680], [2790, 722, E.outQuad], [3060, 1082, E.inOutCubic],
+    [3078, 1075], [3096, 1089], [3114, 1078], [3130, 1082]];
   tracks.inO = [[1990, 0], [2060, 1, E.outQuad], [2139, 1], [2140, 0]];
   tracks.inDark = [[1990, 0.65], [2130, 0]];
   tracks.outO = [[2139, 0], [2140, 1], [3119, 1], [3120, 0]];
@@ -164,6 +165,9 @@ export function choreography(p: ShowInput): Show {
   tracks.loDX = [[3130, 0], [3420, 0.2 * D, E.outCubic], [3720, pol.w * 0.4, E.inOutCubic]];
   tracks.loDY = [[3130, 0], [3420, 0.14 * D, E.outCubic], [3720, pol.h * 0.16, E.inOutCubic]];
   tracks.loR = [[3130, 0], [3420, 14, E.outCubic], [3720, 6, E.inOutCubic]];
+  // 打開那一瞬間的閃光：整顆扭蛋在光裡換成兩個半殼
+  tracks.flashO = [[3050, 0], [3105, 1, E.outQuad], [3160, 1], [3340, 0, E.inQuad]];
+  tracks.flashS = [[3050, 0.55], [3150, 1.1, E.outQuad], [3340, 1.4]];
   tracks.glowO = [[3100, 0], [3220, 1, E.outQuad], [3700, 0.85], [4300, 0.45, E.inOutSine]];
   tracks.glowS = [[3100, 0.3], [3420, 1.5, E.outCubic], [3800, 2.3, E.outQuad], [4300, 2.5]];
   // 中間冒出來的金色光芒（慢慢轉）

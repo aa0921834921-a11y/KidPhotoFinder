@@ -51,7 +51,7 @@ export const MIX_MS = 1800;
 const G = 5200; // 重力
 const DT = 1 / 240;
 
-type B = { x: number; y: number; vx: number; vy: number; a: number; w: number; r: number; m: number; layer: 0 | 1; on: boolean; sink: boolean; hx: number; hy: number };
+type B = { x: number; y: number; vx: number; vy: number; a: number; w: number; r: number; m: number; layer: 0 | 1; on: boolean; sink: boolean; st: number; hx: number; hy: number };
 
 export function rng(seed: number): () => number {
   let t = seed >>> 0;
@@ -71,7 +71,7 @@ function bodies(state: Cap[] | null, rnd: () => number): B[] {
     const s = state?.[i];
     return {
       x: s ? s.x : DOME.cx + (rnd() - 0.5) * 500, y: s ? s.y : DOME.ceil + c.r + 20 + rnd() * 240,
-      vx: 0, vy: 0, a: s ? s.a : rnd() * 360, w: 0, r: c.r, m: c.r * c.r, layer: c.layer, on: s ? s.on : true, sink: false, hx: 0, hy: 0,
+      vx: 0, vy: 0, a: s ? s.a : rnd() * 360, w: 0, r: c.r, m: c.r * c.r, layer: c.layer, on: s ? s.on : true, sink: false, st: 0, hx: 0, hy: 0,
     };
   });
 }
@@ -91,6 +91,8 @@ function wall(b: B, nx: number, ny: number, e: number, mu: number) {
 }
 
 function pair(a: B, b: B, e: number, mu: number): boolean {
+  // 往下掉的那顆卡住超過 0.3 秒：直接穿過去（在金框後面，看不出來）
+  if ((a.sink && a.st > 0.3) || (b.sink && b.st > 0.3)) return false;
   const dx = b.x - a.x, dy = b.y - a.y;
   const R = a.r + b.r, d2 = dx * dx + dy * dy;
   if (d2 >= R * R || d2 < 1e-6) return false;
@@ -144,6 +146,7 @@ function step(bs: B[], t: number, p: Phase, rnd: () => number) {
     if (!b.on) continue;
     if (b.sink) {
       // 被選中的那顆：滑到中間的洞口，從底下掉出去（不受玻璃罩限制，會把擋路的扭蛋推開）
+      b.st += DT;
       b.vx = (DOME.cx - b.x) * 7;
       b.vy = Math.max(b.vy, 0) + 4200 * DT;
       b.w *= Math.exp(-2 * DT);
@@ -162,14 +165,14 @@ function step(bs: B[], t: number, p: Phase, rnd: () => number) {
       // 底下的轉盤把扭蛋往上拋、順著旋鈕的方向轉圈
       const dx = b.x - DOME.cx, dy = b.y - DOME.cy;
       const d = Math.hypot(dx, dy) || 1;
-      const swirl = 7600 * p.stir * (0.55 + 0.45 * Math.sin(t * 9 + b.r));
+      const swirl = 9200 * p.stir * (0.55 + 0.45 * Math.sin(t * 9 + b.r));
       b.vx += (-dy / d) * swirl * DT;
       b.vy += (dx / d) * swirl * DT;
       const low = clamp((b.y - (DOME.cy + 60)) / 220, 0, 1);
-      if (low > 0 && rnd() < 9 * DT * p.stir) {
+      if (low > 0 && rnd() < 13 * DT * p.stir) {
         b.vy -= (1500 + rnd() * 1100) * low * (0.45 + 0.55 * p.stir);
         b.vx += (rnd() - 0.5) * 1100 * p.stir;
-        b.w += (rnd() - 0.5) * 16;
+        b.w += (rnd() < 0.5 ? -1 : 1) * (14 + rnd() * 22);
       }
     }
     const f = Math.exp(-p.drag * DT);
@@ -178,7 +181,7 @@ function step(bs: B[], t: number, p: Phase, rnd: () => number) {
     b.x += b.vx * DT; b.y += b.vy * DT; b.a += (b.w * DT * 180) / Math.PI;
   }
   const touch = bs.map(() => false);
-  for (let it = 0; it < 4; it++) {
+  for (let it = 0; it < 6; it++) {
     for (let i = 0; i < bs.length; i++) {
       const a = bs[i];
       if (!a.on) continue;
@@ -193,7 +196,7 @@ function step(bs: B[], t: number, p: Phase, rnd: () => number) {
     // 掉出玻璃罩（金框下面看不到了）就收起來
     if (b.sink && b.y - b.r > DOME.floor[1] + 70) { b.on = false; b.sink = false; return; }
     // 快停好的時候：碰著別人又幾乎不動的，就讓它停住（不會一直微微抖動）
-    if (p.rest > 0 && touch[i] && Math.hypot(b.vx, b.vy) < 6 * p.rest) { b.vx = 0; b.vy = 0; b.w *= 0.8; }
+    if (p.rest > 0 && touch[i] && !b.sink && Math.hypot(b.vx, b.vy) < 6 * p.rest) { b.vx = 0; b.vy = 0; b.w *= 0.8; }
   });
 }
 
@@ -225,6 +228,9 @@ export function mix(start: Cap[], seed: number): Mix {
   const rnd = rng(seed);
   const bs = bodies(start, rnd);
   const showAt = bs.map(() => 0);
+  // 上一次掉出去的是哪個顏色（這次避開）
+  const last = start.findIndex((c) => !c.on);
+  const avoid: Kind | null = last >= 0 ? SET[last].kind : null;
   bs.forEach((b, i) => {
     b.a = start[i]?.a ?? b.a;
     if (b.layer === 0) { b.hx = b.x; b.hy = b.y; }
@@ -249,14 +255,14 @@ export function mix(start: Cap[], seed: number): Mix {
       next += 1 / 60;
     }
     if (out < 0 && t >= 0.9) {
-      // 選最靠近底部中間洞口的前排扭蛋掉出去
-      let best = -1, bd = Infinity;
-      bs.forEach((b, i) => {
-        if (!b.on || b.layer !== 1) return;
-        const d = Math.hypot(b.x - DOME.cx, (b.y - (DOME.floor[1] - b.r)) * 1.4);
-        if (d < bd) { bd = d; best = i; }
-      });
-      if (best >= 0) { out = best; bs[best].sink = true; }
+      // 從最靠近底部洞口的四顆前排扭蛋裡隨機選一顆掉出去（每次顏色都不一樣）：
+      // 不選剛補進來的、不選跟上一次同顏色的
+      const near = (i: number) => Math.hypot(bs[i].x - DOME.cx, (bs[i].y - (DOME.floor[1] - bs[i].r)) * 1.4);
+      const front = bs.map((b, i) => i).filter((i) => bs[i].on && bs[i].layer === 1).sort((a, c) => near(a) - near(c));
+      const ok = front.filter((i) => !showAt[i] && SET[i].kind !== avoid).slice(0, 4);
+      const pool = ok.length ? ok : front.slice(0, 1);
+      const best = pool[Math.floor(rnd() * pool.length)];
+      if (best != null && best >= 0) { out = best; bs[best].sink = true; }
     }
     if (!homed && t >= 0.95) {
       // 後排要回去的位置：照左右順序分配（不會互相擋路）
@@ -291,7 +297,7 @@ export function mix(start: Cap[], seed: number): Mix {
 function phase(t: number): Phase {
   const stir = smooth(0.28, 0.45, t) * (1 - smooth(0.76, 0.98, t));
   const late = smooth(0.95, 1.3, t);
-  return { stir, e: 0.42 - 0.34 * late, drag: 0.6 + 1.6 * late, spin: 1.2 + 5 * late, g: 1 + 0.6 * late, rest: smooth(1.35, 1.6, t), pull: smooth(0.9, 1.15, t) };
+  return { stir, e: 0.42 - 0.34 * late, drag: 0.6 + 1.6 * late, spin: 0.5 + 5 * late, g: 1 + 0.6 * late, rest: smooth(1.35, 1.6, t), pull: smooth(0.9, 1.15, t) };
 }
 
 /** 把一次轉動的格子取第 k 格（給電腦版用：照時間播放） */
