@@ -179,7 +179,15 @@ async function videoFaces(id: string, name: string) {
   return { out, w, h };
 }
 
-export type ScanResult = { scanned: number; saved: number; review: number; errors: number; stopped: boolean };
+export type ScanResult = {
+  scanned: number; saved: number; review: number; errors: number; stopped: boolean;
+  /** 還剩幾張沒看（下次接著看） */
+  left?: number;
+  /** 自動檢查：老師沒有新照片，什麼都不用做 */
+  idle?: boolean;
+  /** 另一個整理正在進行，這次沒做 */
+  busy?: boolean;
+};
 
 /**
  * mode: manual（在 App 裡按開始）/ background（系統排程）
@@ -315,7 +323,7 @@ async function listOne(folder: DB.Folder, mode: 'manual' | 'background', opts: {
 const LIST_FRESH_MS = { resume: 24 * 3600e3, manual: 15 * 60e3, background: 3600e3 };
 
 export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity, opts: { resume?: boolean } = {}): Promise<ScanResult> {
-  if (busy()) return { scanned: 0, saved: 0, review: 0, errors: 0, stopped: true };
+  if (busy()) return { scanned: 0, saved: 0, review: 0, errors: 0, stopped: true, busy: true };
   const started = DB.now(), t0 = Date.now();
   cancel = false;
   hardCancel = false;
@@ -368,6 +376,8 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
     for (let i = 0; i < todo.length; i++) {
       if (cancel || Date.now() - t0 > budgetMs) break;
       const f = todo[i];
+      // 自動檢查的時間快到了：影片要整個下載，先留到下次（系統只給 10 分鐘，超過的話下一次自動檢查會排不上）
+      if (mode === 'background' && f.kind === 'video' && Date.now() - t0 > budgetMs - 120e3) break;
       const mine = next;
       next = null;
       try {
@@ -437,22 +447,23 @@ export async function runScan(mode: 'manual' | 'background', budgetMs = Infinity
       savedIds.push(...await saveMatches(decisions, (i, n) => {
         setState({ message: tr('scan.savingN', { i: i + 1, n }) });
         FG.update(fgTitle(), tr('scan.savingN', { i: i + 1, n }), i + 1, n);
-      }, mode === 'background' ? t0 + budgetMs + 90e3 : Infinity));
+      }, mode === 'background' ? t0 + budgetMs + 60e3 : Infinity));
     }
     const saved = savedIds.length;
     const stopped = cancel || Date.now() - t0 > budgetMs;
+    const leftN = await DB.pendingCount(s.videos).catch(() => 0);
     // note 存代號（執行紀錄畫面再依語言顯示）；自動檢查什麼都沒找到時不記，紀錄才不會被洗版
     if (mode === 'manual' || scanned || saved || errors) {
-      await DB.addRun({ started, mode, scanned, matched, review, saved, errors, note: stopped ? 'stopped' : '' });
+      await DB.addRun({ started, mode, scanned, matched, review, saved, errors, note: stopped ? 'stopped' : '', left: leftN });
     }
     if (mode === 'background') {
       if (idle) review = (await DB.counts()).review;
-      await Notices.afterBackground(savedIds.slice(notified), { pendingLeft: await DB.pendingCount(s.videos), review }).catch((e) => console.warn('notice failed', e));
+      await Notices.afterBackground(savedIds.slice(notified), { pendingLeft: leftN, review }).catch((e) => console.warn('notice failed', e));
     } else {
       await Notices.afterManual({ saved, review, scanned, stopped }).catch(() => {});
     }
     await DB.setMeta('last_scan', DB.now());
-    return { scanned, saved, review, errors, stopped };
+    return { scanned, saved, review, errors, stopped, left: leftN, idle };
   } catch (e: any) {
     setState({ lastError: String(e?.message || e) });
     throw e;

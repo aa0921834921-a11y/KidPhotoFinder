@@ -37,6 +37,8 @@ export function db(): Promise<SQLite.SQLiteDatabase> {
       await d.execAsync('ALTER TABLE files ADD COLUMN first_seen TEXT').catch(() => {});
       // 兄弟姊妹：每張參考照片、每個「是／不是」、每個判斷結果都記住是哪個孩子（第一個孩子是空字串）
       await d.execAsync("ALTER TABLE refs ADD COLUMN person TEXT DEFAULT ''").catch(() => {});
+      // 執行紀錄：這次做完後還剩幾張沒看（每次看的張數不一樣時，家長才知道為什麼）
+      await d.execAsync('ALTER TABLE runs ADD COLUMN left_n INTEGER').catch(() => {});
       await d.execAsync(`
         CREATE TABLE IF NOT EXISTS labels2(face_id INTEGER, person TEXT, label INTEGER, emb BLOB, at TEXT, PRIMARY KEY(face_id, person));
         CREATE TABLE IF NOT EXISTS decisions2(file_id TEXT, person TEXT, kind TEXT, score REAL, face_id INTEGER, PRIMARY KEY(file_id, person));
@@ -506,16 +508,49 @@ export async function deleteRef(id: string) {
 
 /* ---------------------------------------------------------------- 紀錄 */
 
-export async function addRun(r: { started: string; mode: string; scanned: number; matched: number; review: number; saved: number; errors: number; note: string }) {
+export async function addRun(r: { started: string; mode: string; scanned: number; matched: number; review: number; saved: number; errors: number; note: string; left?: number }) {
   const d = await db();
-  await d.runAsync('INSERT INTO runs(started, finished, mode, scanned, matched, review, saved, errors, note) VALUES (?,?,?,?,?,?,?,?,?)',
-    r.started, now(), r.mode, r.scanned, r.matched, r.review, r.saved, r.errors, r.note);
+  await d.runAsync('INSERT INTO runs(started, finished, mode, scanned, matched, review, saved, errors, note, left_n) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    r.started, now(), r.mode, r.scanned, r.matched, r.review, r.saved, r.errors, r.note, r.left ?? null);
 }
 
-export async function lastRuns(limit = 30) {
+export type RunRow = { started: string; finished: string; mode: string; scanned: number; matched: number; review: number; saved: number; errors: number; note: string; left_n: number | null };
+export async function lastRuns(limit = 30): Promise<RunRow[]> {
   const d = await db();
-  return d.getAllAsync<{ finished: string; mode: string; scanned: number; matched: number; review: number; saved: number; errors: number; note: string }>(
-    'SELECT finished, mode, scanned, matched, review, saved, errors, note FROM runs ORDER BY id DESC LIMIT ?', limit);
+  return d.getAllAsync<RunRow>(
+    'SELECT started, finished, mode, scanned, matched, review, saved, errors, note, left_n FROM runs ORDER BY id DESC LIMIT ?', limit);
+}
+
+/* ---------------------------------------------------------------- 自動檢查的足跡 */
+
+/**
+ * 每一次自動檢查（背景）都記一筆，沒找到新照片也記：
+ * 家長才看得出「有在檢查、只是沒有新照片」，還是「根本沒有在檢查」。
+ *   start：開始了（沒有後續＝做到一半被系統停掉）
+ *   idle：檢查過，沒有新照片      scan：有看照片（n＝看了幾張）
+ *   off：自動檢查被關掉           busy：另一個整理正在進行，這次跳過
+ *   error：出錯（例如沒有網路、需要重新登入）
+ */
+export type BgResult = 'start' | 'idle' | 'scan' | 'off' | 'busy' | 'error';
+export type BgEntry = { at: string; r: BgResult; n?: number; sec?: number };
+const BG_KEY = 'bg_log';
+
+export async function bgLog(): Promise<BgEntry[]> {
+  try {
+    const v = JSON.parse((await getMeta(BG_KEY)) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 記一筆（start 之後的結果會取代同一次的 start） */
+export async function logBg(e: BgEntry) {
+  const list = await bgLog();
+  const last = list[list.length - 1];
+  if (e.r !== 'start' && last && last.r === 'start' && last.at === e.at) list[list.length - 1] = e;
+  else list.push(e);
+  await setMeta(BG_KEY, JSON.stringify(list.slice(-120)));
 }
 
 export async function resetAll() {

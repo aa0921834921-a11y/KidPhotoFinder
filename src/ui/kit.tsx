@@ -350,7 +350,7 @@ export function SectionTitle({ children, style }: { children: React.ReactNode; s
 }
 
 /* ---------------------------------------------------------------- 圖示（線條風格） */
-export type IconName = 'home' | 'check' | 'album' | 'face' | 'gear' | 'camera' | 'star' | 'x' | 'undo' | 'folder' | 'plus' | 'cloud' | 'bell' | 'heart' | 'user' | 'video' | 'clock' | 'list' | 'trash' | 'reset' | 'palette' | 'globe';
+export type IconName = 'home' | 'check' | 'album' | 'face' | 'gear' | 'camera' | 'star' | 'x' | 'undo' | 'folder' | 'plus' | 'cloud' | 'bell' | 'heart' | 'user' | 'video' | 'clock' | 'list' | 'trash' | 'reset' | 'palette' | 'globe' | 'search' | 'spark';
 const PATHS: Record<IconName, string> = {
   home: 'M4 11.5 12 4l8 7.5M6.5 10v9.5h11V10M10 19.5v-5h4v5',
   check: 'M8.5 12.3l2.4 2.4 4.8-5M8 4h8a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z',
@@ -374,6 +374,8 @@ const PATHS: Record<IconName, string> = {
   reset: 'M5 12a7 7 0 1 0 2-4.9M5 4v4h4',
   palette: 'M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.2-1.6-1.2-2.8 0-1 .8-1.6 1.8-1.6h2.2a3.9 3.9 0 0 0 3.9-3.9c0-3.9-3.8-7-8.5-7zM8 11h.01M10.5 7.8h.01M14.5 7.8h.01',
   globe: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM3.5 12h17M12 3.5c2.2 2.3 3.4 5.2 3.4 8.5s-1.2 6.2-3.4 8.5c-2.2-2.3-3.4-5.2-3.4-8.5s1.2-6.2 3.4-8.5z',
+  search: 'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.3 15.3 20 20',
+  spark: 'M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z',
 };
 export function Icon({ name, size = 22, color, stroke = 1.9 }: { name: IconName; size?: number; color?: string; stroke?: number }) {
   const t = useTheme();

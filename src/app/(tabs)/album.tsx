@@ -1,12 +1,12 @@
 import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { SectionList, StyleSheet, Text, View } from 'react-native';
+import { Pressable, SectionList, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { tr, useLang } from '../../i18n';
 import * as DB from '../../services/db';
 import { useApp } from '../../services/state';
 import { Polaroid } from '../../ui/art';
-import { art, DashLine, Empty, HeadCard, Link, Paper, useContentWidth } from '../../ui/kit';
+import { art, cardStyle, DashLine, Empty, HeadCard, Icon, Link, Paper, useContentWidth } from '../../ui/kit';
 import { makeStyles, radii, useTheme, type Theme } from '../../ui/theme';
 import { usePreview } from '../../ui/usePreview';
 
@@ -62,6 +62,17 @@ export default function Album() {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={<View style={{ marginBottom: 16, gap: 10 }}>
           <HeadCard title={tr('album.title')} sub={tr('album.sub', { n: total })} />
+          {total ? (
+            <Pressable onPress={() => router.push('/search')} accessibilityRole="search" accessibilityLabel={tr('tm.title')}
+              style={({ pressed }) => [cardStyle(t), s.tm, pressed && { transform: [{ scale: 0.985 }] }]}>
+              <View style={[s.tmIc, { backgroundColor: t.c.accentWash, borderColor: t.c.accent }]}><Icon name="clock" size={20} color={t.c.accentDeep} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.tmTitle}>{tr('tm.title')}</Text>
+                <Text style={s.tmSub} numberOfLines={1}>{tr('tm.entrySub')}</Text>
+              </View>
+              <Icon name="search" size={20} color={t.c.muted} />
+            </Pressable>
+          ) : null}
           {total ? <Link title={tr('chk.album', { n: unchecked })} onPress={() => router.push('/check')} style={{ fontSize: 14, alignSelf: 'flex-end' }} /> : null}
         </View>}
         ListEmptyComponent={<Empty title={tr('album.emptyTitle')} body={tr('album.emptyBody')} />}
@@ -113,6 +124,11 @@ const useStyles = makeStyles((t: Theme) => {
       height: 18, marginBottom: 16, zIndex: 2, boxShadow: t.id === 'candy' ? '0px 5px 0px #F4CDE0' : 'none',
     } as any,
     gh: { gap: 4, paddingBottom: 10 },
+    tm: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingLeft: 10, paddingRight: 16, borderRadius: 999,
+      ...(t.id === 'starry' ? { backgroundImage: 'linear-gradient(110deg, #2D2F66, #222B54)' } : null) } as ViewStyle,
+    tmIc: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+    tmTitle: { ...t.title, fontSize: 16, color: c.ink },
+    tmSub: { ...t.round, fontSize: 12.5, color: c.muted, marginTop: 1 },
     ghRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
     ghTitle: { ...t.title, fontSize: 18, lineHeight: 25, color: t.id === 'watercolor' || t.id === 'book' ? '#885B52' : c.groupTitle, flexShrink: 1 },
     ghN: { ...t.round, fontSize: 12, color: c.muted },

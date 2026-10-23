@@ -50,7 +50,19 @@ const savedRow = (s: { id: string; g: number }, i: number) => ({
   name: `IMG_${4120 + i}.jpg`, folder: `${ROOT}/${G[s.g]}`, modified: '2026-10-1' + (5 + s.g), kind: 'photo',
 });
 export async function recentSaved(limit = 30) { return SAVED.slice(0, limit).map(savedRow); }
-export async function savedByFolder() { return SAVED.map(savedRow).sort((a, b) => (a.folder < b.folder ? 1 : a.folder > b.folder ? -1 : 0)); }
+/** 時光機示範：以前的活動 */
+const OLD: [string, string, string[]][] = empty ? [] : [
+  ['114-1 健康班/12月/1224 聖誕活動', '2025-12-24 10:00:00', ['p03', 'p08', 'p11', 'p12']],
+  ['114-1 健康班/10月/1023 慶生會', `${Number(today.slice(0, 4)) - 1}-${today.slice(5, 10)} 10:00:00`, ['p01', 'p05', 'p09']],
+  ['114-2 健康班/5月/0505 運動會', '2026-05-05 10:00:00', ['p07', 'p10', 'p12', 'p13', 'p04']],
+  ['113-2 小班/4月/0412 運動會', '2025-04-12 10:00:00', ['p02', 'p04']],
+  ['114-2 健康班/7月/0718 玩水趣', '2026-07-18 10:00:00', ['p06', 'p09', 'p01']],
+  ['114-1 健康班/11月/1120 戶外教學-動物園', '2025-11-20 10:00:00', ['p10', 'p02', 'p07']],
+];
+export async function savedByFolder() {
+  const old = OLD.flatMap(([folder, modified, ids]) => ids.map((id, i) => ({ file_id: id, asset_id: 'a' + id, at: modified, name: `IMG_${i}.jpg`, folder, modified, kind: 'photo' })));
+  return [...SAVED.map(savedRow), ...old].sort((a, b) => (a.folder < b.folder ? 1 : a.folder > b.folder ? -1 : 0));
+}
 
 const RV = empty ? [] : ['f03_1', 'f01_1', 'f05_1', 'f06_0', 'f10_0', 'f05_2', 'f12_1', 'f08_1', 'f02_0', 'f09_0', 'f06_1', 'f12_0'];
 const SC = [0.47, 0.41, 0.46, 0.40, 0.45, 0.39, 0.44, 0.42, 0.38, 0.41, 0.39, 0.40];
@@ -85,13 +97,26 @@ export async function deleteRef(id: string) { REFS = REFS.filter((r) => r.id !==
 export function addDemoRefs(uris: string[], person = '') { for (const u of uris) REFS.push({ id: 'u' + Date.now() + Math.random(), uri: u, status: 'ok', person }); }
 export function addSaved(ids: string[]) { for (const id of ids) SAVED.unshift({ id, g: 3 }); }
 export async function lastRunsAdd() {}
-export async function lastRuns() {
+export type RunRow = { started: string; finished: string; mode: string; scanned: number; matched: number; review: number; saved: number; errors: number; note: string; left_n: number | null };
+const ago = (min: number) => localTime(new Date(Date.now() - min * 60e3));
+export async function lastRuns(): Promise<RunRow[]> {
   return [
-    { finished: '2026-10-18 08:12:00', mode: 'background', scanned: 52, matched: 6, review: 3, saved: 6, errors: 0, note: '' },
-    { finished: '2026-10-17 21:40:00', mode: 'background', scanned: 31, matched: 4, review: 2, saved: 4, errors: 0, note: '' },
-    { finished: '2026-10-17 12:05:00', mode: 'manual', scanned: 12, matched: 0, review: 0, saved: 0, errors: 0, note: 'stopped' },
+    { started: ago(95), finished: ago(89), mode: 'background', scanned: 52, matched: 6, review: 3, saved: 6, errors: 0, note: '', left_n: 0 },
+    { started: ago(400), finished: ago(394), mode: 'background', scanned: 31, matched: 4, review: 2, saved: 4, errors: 0, note: 'stopped', left_n: 120 },
+    { started: ago(900), finished: ago(860), mode: 'manual', scanned: 166, matched: 20, review: 1, saved: 20, errors: 0, note: '', left_n: 151 },
   ];
 }
+export type BgResult = 'start' | 'idle' | 'scan' | 'off' | 'busy' | 'error';
+export type BgEntry = { at: string; r: BgResult; n?: number; sec?: number };
+export async function bgLog(): Promise<BgEntry[]> {
+  if (q.get('stale') === '1') return [{ at: ago(600), r: 'idle', sec: 4 }];
+  return [
+    { at: ago(900), r: 'scan', n: 166 }, { at: ago(700), r: 'idle' }, { at: ago(640), r: 'start' }, { at: ago(560), r: 'idle' },
+    { at: ago(400), r: 'scan', n: 31 }, { at: ago(340), r: 'idle' }, { at: ago(280), r: 'idle' }, { at: ago(220), r: 'error' },
+    { at: ago(160), r: 'idle' }, { at: ago(95), r: 'scan', n: 52 }, { at: ago(40), r: 'idle', sec: 3 }, { at: ago(8), r: 'idle', sec: 2 },
+  ];
+}
+export async function logBg(_e: BgEntry) {}
 export async function resetAll() {}
 
 /* ---------------------------------------------------------------- 新照片通知（示範：老師剛上傳的兩個活動） */

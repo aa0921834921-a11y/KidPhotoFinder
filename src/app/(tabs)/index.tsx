@@ -128,6 +128,9 @@ export default function Home() {
               <Text style={s.brandName}>童年拾光</Text>
               <Text style={s.brandSub}>{tr('home.brandSub')}</Text>
             </View>
+            <Pressable style={s.bell} onPress={() => router.push('/search')} accessibilityRole="search" accessibilityLabel={tr('tm.title')}>
+              <Icon name="search" size={20} />
+            </Pressable>
             <Pressable style={s.bell} onPress={() => router.push('/new')} accessibilityLabel={tr('new.title')}>
               <Icon name="bell" size={21} />
               {unseen > 0 || app.counts.savedToday > 0 ? <View style={s.bellDot} /> : null}

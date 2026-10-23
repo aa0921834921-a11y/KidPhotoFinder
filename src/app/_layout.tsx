@@ -4,11 +4,11 @@ import * as Notifications from 'expo-notifications';
 import { router, Stack, SplashScreen } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { loadLang } from '../i18n';
-import { setupNotifications, syncSchedule } from '../services/background';
+import { healSchedule, setupNotifications, syncSchedule } from '../services/background';
 import { getSettings } from '../services/db';
 import { flushDigest } from '../services/notices';
 import { refreshCounts } from '../services/scanner';
@@ -42,11 +42,17 @@ export default function Root() {
       await refreshCounts().catch(() => {});
       setReady(true);
       // 自動找新照片的間隔跟設定一致（舊版是一天一次）；早上打開 App 時，晚上找到的新照片也一起通知
-      syncSchedule().catch(() => {});
+      // 自動檢查的「下一次」如果沒排上（例如上次超過系統時間被停掉），順便重新排好
+      syncSchedule().then(() => healSchedule()).catch(() => {});
       flushDigest().catch(() => {});
     })();
   }, []);
   useEffect(() => { if (fonts && ready) SplashScreen.hideAsync().catch(() => {}); }, [fonts, ready]);
+  // 回到 App 時也看一下自動檢查有沒有在跑
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (v) => { if (v === 'active') healSchedule().catch(() => {}); });
+    return () => sub.remove();
+  }, []);
   useEffect(() => { if (fonts && ready && !onboarded) setTimeout(() => router.replace('/onboarding'), 0); }, [fonts, ready, onboarded]);
   useEffect(() => {
     if (!fonts || !ready || !onboarded || Platform.OS === 'web') return;
@@ -69,6 +75,7 @@ export default function Root() {
           <Stack.Screen name="new" />
           <Stack.Screen name="notify" />
           <Stack.Screen name="check" />
+          <Stack.Screen name="search" />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

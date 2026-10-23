@@ -11,7 +11,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import * as FG from '../../modules/kpf-foreground';
 import { loadLang, onLangChange, tr } from '../i18n';
-import { getSettings } from './db';
+import { bgLog, getMeta, getSettings, logBg, now, parseLocal, setMeta } from './db';
 import { askNotificationPermission, flushDigest, localizeChannel } from './notices';
 import { checkEvery } from './notifyPrefs';
 import { requestStop, runScan } from './scanner';
@@ -20,21 +20,33 @@ export { askNotificationPermission };
 
 export const DAILY_TASK = 'kidphoto-daily-scan';
 
-/** 背景一次最多整理多久（Android 系統最多給 10 分鐘，留一點時間收尾） */
-const BUDGET_MS = 8 * 60 * 1000;
+/**
+ * 背景一次最多整理多久。Android 系統最多給 10 分鐘，而且超過的話「下一次自動檢查」會排不上
+ * （要等打開 App 才會恢復），所以多留一點時間給最後的判斷和存照片。
+ */
+const BUDGET_MS = 6 * 60 * 1000;
 
 TaskManager.defineTask(DAILY_TASK, async () => {
   const sub = BackgroundTask.addExpirationListener(() => requestStop(true));
+  const at = now(), t0 = Date.now();
+  // 先記「開始了」：如果後面被系統中途停掉，執行紀錄看得出來
+  await logBg({ at, r: 'start' }).catch(() => {});
   try {
     // 背景執行時畫面沒有打開：先讀家長選的語言，通知才會是對的語言
     await loadLang().catch(() => {});
     const s = await getSettings();
-    if (!s.autoDaily || !s.folderId || !s.onboarded) return BackgroundTask.BackgroundTaskResult.Success;
+    if (!s.autoDaily || !s.folderId || !s.onboarded) {
+      await logBg({ at, r: 'off' }).catch(() => {});
+      return BackgroundTask.BackgroundTaskResult.Success;
+    }
     // 早上：晚上找到的新照片一次告訴家長
     await flushDigest().catch(() => {});
-    await runScan('background', BUDGET_MS);
+    const r = await runScan('background', BUDGET_MS);
+    const sec = Math.round((Date.now() - t0) / 1000);
+    await logBg(r.busy ? { at, r: 'busy', sec } : r.idle ? { at, r: 'idle', sec } : { at, r: 'scan', n: r.scanned, sec }).catch(() => {});
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
+    await logBg({ at, r: 'error', sec: Math.round((Date.now() - t0) / 1000) }).catch(() => {});
     return BackgroundTask.BackgroundTaskResult.Failed;
   } finally {
     sub.remove();
@@ -57,8 +69,36 @@ export async function syncSchedule(): Promise<void> {
   }
   const curEvery = Number((cur?.options as { minimumInterval?: number } | undefined)?.minimumInterval || 0);
   if (cur && curEvery === every) return;
-  if (cur) await BackgroundTask.unregisterTaskAsync(DAILY_TASK);
+  await arm(every, !!cur);
+}
+
+async function arm(every: number, registered: boolean) {
+  if (registered) await BackgroundTask.unregisterTaskAsync(DAILY_TASK);
   await BackgroundTask.registerTaskAsync(DAILY_TASK, { minimumInterval: every });
+  await setMeta('bg_armed_at', String(Date.now())).catch(() => {});
+}
+
+/** 自動檢查應該多久會跑一次（分鐘）：間隔的兩倍再多半小時還沒跑，就當作沒在跑 */
+export const staleAfterMin = (every: number) => every * 2 + 30;
+
+/**
+ * 自動檢查的「下一次」排不上時（例如某一次超過系統的 10 分鐘被停掉），重新排好。
+ * 打開 App、回到 App 時呼叫；一小時最多重排一次。回傳 true 代表剛剛重排了。
+ */
+export async function healSchedule(): Promise<boolean> {
+  const s = await getSettings();
+  if (!s.autoDaily || !s.onboarded || !s.folderId) return false;
+  const every = checkEvery(s.freq);
+  const log = await bgLog();
+  const last = log.length ? parseLocal(log[log.length - 1].at).getTime() : 0;
+  const armed = Number((await getMeta('bg_armed_at')) || 0);
+  if (Date.now() - Math.max(last, armed) < staleAfterMin(every) * 60e3) return false;
+  const healed = Number((await getMeta('bg_heal_at')) || 0);
+  if (Date.now() - healed < 60 * 60e3) return false;
+  await setMeta('bg_heal_at', String(Date.now()));
+  const tasks = await TaskManager.getRegisteredTasksAsync().catch(() => [] as TaskManager.TaskManagerTask[]);
+  await arm(every, tasks.some((x) => x.taskName === DAILY_TASK));
+  return true;
 }
 
 export async function backgroundAvailable(): Promise<boolean> {
