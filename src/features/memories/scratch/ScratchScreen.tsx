@@ -108,7 +108,7 @@ function CardFace({ m, info, card, w, h, font }: { m: Memory; info: Map<string, 
 
 function Burst({ p, w, h }: { p: SharedValue<number>; w: number; h: number }) {
   return (
-    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+    <View pointerEvents="none" collapsable={false} style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
       {Array.from({ length: 18 }, (_, i) => <BurstBit key={i} p={p} i={i} w={w} h={h} />)}
     </View>
   );
@@ -399,9 +399,13 @@ export default function ScratchScreen({ demo: demoParam }: { demo: boolean }) {
                   </Animated.View>
                 ) : null}
               </View>
-              {/* 金框（只畫一次，蓋在銀箔外圈） */}
-              <Image source={FRAME} style={abs(0, 0, cw, chh)} contentFit="fill" pointerEvents="none" />
-              <View pointerEvents="none" style={abs(fo, fo, fw, fh)}>
+              {/* 金框（只畫一次，蓋在銀箔外圈）。
+                  一定要包在 pointerEvents="none" 的 View 裡：Android 的 expo-image 不理 pointerEvents，
+                  金框的圖會把手指擋住，底下的銀箔就刮不到（網頁版測不出來） */}
+              <View pointerEvents="none" collapsable={false} style={abs(0, 0, cw, chh)}>
+                <Image source={FRAME} style={abs(0, 0, cw, chh)} contentFit="fill" />
+              </View>
+              <View pointerEvents="none" collapsable={false} style={abs(fo, fo, fw, fh)}>
                 {FLAKES.length ? Array.from({ length: FLAKE_N }, (_, i) => <Flake key={i} src={FLAKES[i % FLAKES.length]} reg={(go) => { flakeGo.current[i] = go; }} />) : null}
               </View>
               <Burst p={burst} w={cw} h={chh} />
