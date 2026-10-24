@@ -76,6 +76,8 @@ export default function Root() {
           <Stack.Screen name="notify" />
           <Stack.Screen name="check" />
           <Stack.Screen name="search" />
+          <Stack.Screen name="memory-sky" options={{ animation: 'fade', contentStyle: { backgroundColor: '#060A21' } }} />
+          <Stack.Screen name="memory-scratch" options={{ animation: 'fade', contentStyle: { backgroundColor: '#060A21' } }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

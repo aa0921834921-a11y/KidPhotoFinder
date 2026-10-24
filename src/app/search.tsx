@@ -18,6 +18,7 @@ import * as TM from '../core/timeMachine';
 import { getLang, tr, useLang } from '../i18n';
 import * as DB from '../services/db';
 import { useApp } from '../services/state';
+import { MemoryPlay } from '../features/memories/entry/MemoryPlay';
 import { GachaStage } from '../ui/gacha/GachaStage';
 import { IMG as GACHA } from '../ui/gacha/images';
 import { cardStyle, Empty, H1, Icon, Link, P, Paper, SectionTitle, useContentWidth } from '../ui/kit';
@@ -356,6 +357,8 @@ export default function Search() {
                 {g.events.slice(0, 3).map((e) => <EventCard key={e.folder} ev={e} onOpen={() => setOpen(e)} />)}
               </View>
             ))}
+            {/* 回憶玩法：每日刮刮樂、回憶星空（跟回憶扭蛋放在一起） */}
+            <MemoryPlay count={events.length} />
             <Gacha events={events} onOpen={setOpen} />
             {months.length > 1 ? <Ruler months={months} sel={sel ? `${sel.y}-${sel.m}` : null} onPick={(y, m) => go(`${y}/${m}`)} /> : null}
             {cloud.length ? <Cloud items={cloud} onPick={go} /> : null}
