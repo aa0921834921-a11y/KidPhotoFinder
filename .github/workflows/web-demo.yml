@@ -33,6 +33,8 @@ jobs:
         run: |
           npx expo export --platform web --output-dir dist
           cp dist/index.html dist/404.html
+          # 刮刮樂的銀箔用 Skia 畫，網頁版要另外放 canvaskit.wasm
+          cp node_modules/canvaskit-wasm/bin/full/canvaskit.wasm dist/
           touch dist/.nojekyll
       - uses: actions/upload-pages-artifact@v4
         with:
