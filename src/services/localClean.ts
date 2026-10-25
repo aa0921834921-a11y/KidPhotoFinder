@@ -59,7 +59,7 @@ export type CleanPlan = {
 export async function copyLocalToAlbum(fileId: string, name: string, album: Album | null): Promise<Asset> {
   const src = await new Asset(assetIdOf(fileId)).getUri();
   const tmp = new File(Paths.cache, `clean_${Date.now()}_${name.replace(/[\\/:*?"<>|]/g, '_')}`);
-  new File(src).copy(tmp);
+  await new File(src).copy(tmp); // 複製完才建相簿裡的照片（copy 是非同步的）
   try {
     return await Asset.create(tmp.uri, album || undefined);
   } finally {

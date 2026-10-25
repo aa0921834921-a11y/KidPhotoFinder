@@ -56,7 +56,7 @@ export async function addReferencePhotos(uris: string[], onEach?: (i: number) =>
     const dst = new File(dir, `${id}.jpg`);
     const img = await loadImage(uris[i], 2400);
     // 複製一份到 App 裡，之後顯示和重新計算都用這份
-    new File(uris[i]).copy(dst);
+    await new File(uris[i]).copy(dst); // copy 是非同步的，等它複製完
     const faces = await analyze(img, { minFacePx: 24, flip: true });
     await DB.addRef(id, dst.uri, faces.map((f) => ({ size: f.size, emb: f.emb })), person);
     if (faces.length) ok++; else noface++;

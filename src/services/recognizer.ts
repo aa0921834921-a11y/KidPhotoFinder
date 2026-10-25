@@ -2,6 +2,7 @@
  * 在手機上跑人臉模型（ONNX Runtime）。
  *  - YuNet（找臉，232 KB）隨 App 附上
  *  - w600k_r50（認臉，174 MB）第一次使用時下載，跟電腦版同一個檔案、會驗證 SHA-256
+ *    先從自己的 GitHub（kidphotofinder-models）下載；那裡下載不到才用原本的 FaceFusion 下載點
  */
 import { Asset } from 'expo-asset';
 import { Directory, File, Paths } from 'expo-file-system';
@@ -28,7 +29,16 @@ import {
   alignFace, detectFaces, embed, rgbaToBGR, type BGRImage, type Face, type YunetOutputs,
 } from '../core/face';
 
-const W600K_URL = 'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_w600k_r50.onnx';
+/**
+ * 認臉模型的下載點，照順序試；哪一個下載到的檔案都要通過下面的 SHA-256 檢查才會用（被改過的檔案不會用）。
+ * 1. 自己的 GitHub 公開專案 kidphotofinder-models 的 Release（標籤 w600k-v1，檔名 w600k_r50.onnx）：主要的下載點
+ * 2. 原本的下載點（FaceFusion 在 GitHub 轉存的 InsightFace w600k_r50）：自己的下載不到時才用
+ * InsightFace 的預訓練模型只開放非商業研究使用：https://github.com/deepinsight/insightface#license
+ */
+const W600K_URLS = [
+  'https://github.com/aa0921834921-a11y/kidphotofinder-models/releases/download/w600k-v1/w600k_r50.onnx',
+  'https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/arcface_w600k_r50.onnx',
+];
 const W600K_SHA256 = [
   'f1f79dc3b0b79a69f94799af1fffebff09fbd78fd96a275fd8f0cbbea23270d1',
   '4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43',
@@ -44,27 +54,37 @@ export function modelReady(): boolean {
   return w600kFile().exists && okMark().exists;
 }
 
-/** 下載辨識模型（約 174 MB）。progress: 0~1 */
+/** 下載辨識模型（約 174 MB）。progress: 0~1。第一個下載點失敗（網址不見了、檔案不對）就換下一個 */
 export async function downloadModel(progress?: (p: number) => void, signal?: AbortSignal): Promise<void> {
   if (modelReady()) return;
   const dir = modelsDir();
   if (!dir.exists) dir.create({ intermediates: true });
-  const tmp = new File(dir, 'w600k_r50.download');
-  if (tmp.exists) tmp.delete();
-  await File.downloadFileAsync(W600K_URL, tmp, {
-    idempotent: true,
-    signal,
-    onProgress: (d) => progress?.(d.totalBytes ? d.bytesWritten / d.totalBytes : 0),
-  });
-  const sha = (await tmp.digest('SHA-256')).toLowerCase();
-  if (!W600K_SHA256.includes(sha)) {
-    tmp.delete();
-    throw new Error(tr('err.modelBroken'));
+  let lastErr: unknown = null;
+  for (const url of W600K_URLS) {
+    const tmp = new File(dir, 'w600k_r50.download');
+    const drop = () => { try { if (tmp.exists) tmp.delete(); } catch {} };
+    drop();
+    try {
+      progress?.(0);
+      await File.downloadFileAsync(url, tmp, {
+        idempotent: true,
+        signal,
+        onProgress: (d) => progress?.(d.totalBytes ? d.bytesWritten / d.totalBytes : 0),
+      });
+      const sha = (await tmp.digest('SHA-256')).toLowerCase();
+      if (!W600K_SHA256.includes(sha)) { drop(); lastErr = new Error(tr('err.modelBroken')); continue; }
+      const dst = w600kFile();
+      if (dst.exists) dst.delete();
+      await tmp.move(dst); // 搬好了才寫「下載完成」的標記
+      await okMark().write(sha);
+      return;
+    } catch (e) {
+      drop();
+      if (signal?.aborted) throw e; // 使用者取消：不要再試下一個
+      lastErr = e;
+    }
   }
-  const dst = w600kFile();
-  if (dst.exists) dst.delete();
-  tmp.move(dst);
-  okMark().write(sha);
+  throw lastErr instanceof Error ? lastErr : new Error(tr('err.modelBroken'));
 }
 
 let det: InferenceSession | null = null;
