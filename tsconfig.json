@@ -1,5 +1,5 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": { "strict": true },
-  "exclude": ["scratch", "node_modules"]
+  "exclude": ["scratch", "node_modules", "claw"]
 }

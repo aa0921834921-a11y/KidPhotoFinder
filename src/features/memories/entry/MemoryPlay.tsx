@@ -1,5 +1,5 @@
 /**
- * 回憶時光機裡的「回憶玩法」：每日刮刮樂、回憶星空的入口（跟回憶扭蛋放在一起）。
+ * 回憶時光機裡的「回憶玩法」：每日刮刮樂、回憶星空、時光娃娃機的入口（跟回憶扭蛋放在一起）。
  * 不改首頁；刮刮樂會顯示今天刮過了沒。
  */
 import { Image } from 'expo-image';
@@ -14,6 +14,7 @@ import { openedToday } from '../daily';
 
 const SKY = require('../../../../assets/memory-ui/sky.webp');
 const FOIL = require('../../../../assets/memory-ui/foil.webp');
+const CLAW = require('../../../../assets/memory-ui/claw.webp');
 
 export function MemoryPlay({ count }: { count: number }) {
   const t = useTheme();
@@ -60,6 +61,19 @@ export function MemoryPlay({ count }: { count: number }) {
           <Text style={s.tileSub} numberOfLines={1}>{count ? tr('sky.count', { n: count }) : tr('mp.skySub')}</Text>
         </Pressable>
       </View>
+      {/* 時光娃娃機：一整排（圖在左邊） */}
+      <Pressable onPress={() => router.push('/memory-claw')} accessibilityRole="button" accessibilityLabel={`${tr('mp.claw')}，${tr('mp.clawSub')}`}
+        style={({ pressed }) => [s.wide, pressed && { transform: [{ scale: 0.99 }] }]}>
+        <View style={s.wideArt}>
+          <Image source={CLAW} style={StyleSheet.absoluteFill} contentFit="cover" />
+          <View style={s.frame} />
+        </View>
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text style={s.tileTitle} numberOfLines={1}>{tr('mp.claw')}</Text>
+          <Text style={s.tileSub} numberOfLines={2}>{tr('mp.clawSub')}</Text>
+        </View>
+        <Text style={s.chev}>›</Text>
+      </Pressable>
     </View>
   );
 }
@@ -74,4 +88,7 @@ const useStyles = makeStyles((t: Theme) => StyleSheet.create({
   tileSub: { ...t.round, fontSize: 12.5, color: t.c.muted },
   badge: { alignSelf: 'flex-start', borderRadius: 999, paddingVertical: 2, paddingHorizontal: 10 },
   badgeText: { ...t.round, fontSize: 12 },
+  wide: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
+  wideArt: { width: 128, aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0E1338' },
+  chev: { ...t.round, fontSize: 24, color: t.c.muted },
 }));
