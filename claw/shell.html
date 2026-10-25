@@ -1,0 +1,97 @@
+<title>時光娃娃機</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 版面：全螢幕 3D 場景；上方是狀態與視角，下方是搖桿和抓取鍵，機台永遠擺在兩者之間 */
+:root{
+  --night:#070b1d;--night2:#141b3d;--gold:#e9c27a;--gold-deep:#b9873e;--cream:#fff4dc;--ink:#2a1d14;--muted:#c9b48e;
+  --display:"Noto Serif TC","Songti TC",serif;--body:"Noto Sans TC",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--night);color:var(--cream);font-family:var(--body);overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0}
+#cv{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#hud{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 8px) max(12px,env(safe-area-inset-right,0px)) 4px max(12px,env(safe-area-inset-left,0px));
+  display:flex;flex-direction:column;gap:6px;pointer-events:none;z-index:3}
+.row{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
+.row>*{pointer-events:auto}
+.pill{background:#0a0f26d9;border:1px solid #e9c27a66;border-radius:999px;padding:4px 10px;font-size:12.5px;color:var(--cream);font-variant-numeric:tabular-nums;white-space:nowrap}
+.left{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+button.pill{font:600 12.5px var(--body);cursor:pointer;padding:5px 11px}
+.pill.back{color:var(--gold)}
+.pill.demo{background:#ff9164eb;color:#2a1206;border-color:transparent;font-weight:700}
+.tools{display:flex;gap:6px;flex-wrap:wrap}
+.tools button{border:1px solid #e9c27a44;background:#141b3dcc;color:var(--cream);border-radius:999px;padding:3px 10px;font:500 12px var(--body);cursor:pointer}
+button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+#msg{position:fixed;left:10%;right:10%;top:34%;text-align:center;font:800 clamp(17px,5vw,26px)/1.35 var(--display);color:var(--cream);
+  text-shadow:0 2px 10px #000,0 0 18px #e9c27a99;pointer-events:none;transition:opacity .3s;z-index:2}
+#controls{position:fixed;left:0;right:0;bottom:0;padding:6px max(18px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 12px) max(18px,env(safe-area-inset-left,0px));
+  display:flex;justify-content:space-between;align-items:flex-end;pointer-events:none;z-index:3}
+#controls>*{pointer-events:auto}
+#pad{position:relative;width:118px;height:118px;border-radius:50%;background:radial-gradient(circle at 50% 45%,#1d2a66cc,#0a0f26e6 70%);border:2px solid #e9c27a88;
+  box-shadow:inset 0 0 18px #000a,0 6px 16px #0008;touch-action:none;cursor:grab}
+#pad::after{content:"";position:absolute;inset:16%;border-radius:50%;border:1px dashed #e9c27a55;pointer-events:none}
+#knob{position:absolute;left:50%;top:50%;width:62%;transform:translate(-50%,-50%);pointer-events:none;filter:drop-shadow(0 4px 6px #000c)}
+.hint{align-self:center;font-size:11.5px;color:var(--muted);text-align:center;line-height:1.5;max-width:30%;text-shadow:0 1px 3px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.6)}
+#grab{width:104px;height:104px;border:0;padding:0;background:none;border-radius:50%;cursor:pointer;transition:transform .08s,filter .08s;-webkit-tap-highlight-color:transparent;touch-action:none;-webkit-touch-callout:none}
+#grab img,#knob{-webkit-user-drag:none;user-select:none;-webkit-touch-callout:none}
+#grab img{width:100%;height:100%;display:block;filter:drop-shadow(0 6px 10px #000b)}
+#grab.down{transform:scale(.92) translateY(3px);filter:brightness(1.2)}
+#grab:disabled{filter:grayscale(.6) brightness(.7)}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:700 18px var(--display);color:var(--gold);background:var(--night);z-index:5}
+#modal{position:fixed;inset:0;background:#05081acc;display:flex;align-items:center;justify-content:center;z-index:9;padding:16px}
+#ticket{position:relative;height:min(74vh,calc((100vw - 32px)*1.5));aspect-ratio:2/3;animation:rise .55s cubic-bezier(.2,1.3,.5,1)}
+#ticket>img.bg{width:100%;height:100%;display:block;filter:drop-shadow(0 12px 30px #000c)}
+#tphoto{position:absolute;left:12.3%;top:26%;width:74.3%;height:34.7%;object-fit:cover;border-radius:4px}
+#ttext{position:absolute;left:14%;right:14%;top:64%;height:17%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--ink);text-align:center}
+#ttext b{font:800 clamp(16px,4.2vh,26px)/1.2 var(--display)}
+#ttext span{font-size:clamp(12px,2vh,15px);color:#6b4b2b}
+#tbtns{position:absolute;left:0;right:0;top:calc(100% + 10px);display:flex;gap:8px;justify-content:center}
+#tbtns button{border:0;border-radius:999px;padding:9px 14px;font:700 14px var(--body);cursor:pointer;background:var(--gold);color:var(--ink)}
+#tbtns button.ghost{background:#141b3d;color:var(--cream);border:1px solid #e9c27a66}
+.spk{position:absolute;width:13%;pointer-events:none;animation:tw 1.6s ease-in-out infinite}
+@keyframes tw{0%,100%{opacity:.2;transform:scale(.6) rotate(0)}50%{opacity:1;transform:scale(1.1) rotate(20deg)}}
+@keyframes rise{from{transform:translateY(40px) scale(.8);opacity:0}}
+#album{position:fixed;inset:0;background:#05081af0;z-index:9;display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:12px;overflow:auto}
+#album h2{font:800 20px var(--display);margin:0;color:var(--gold)}
+#agrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:min(100%,460px)}
+#agrid figure{margin:0;text-align:center;font-size:12px;color:var(--muted)}
+#agrid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;border:2px solid var(--gold-deep)}
+#toast{position:fixed;left:50%;bottom:150px;transform:translateX(-50%);background:#141b3df2;border:1px solid #e9c27a88;color:var(--cream);
+  padding:8px 14px;border-radius:999px;font-size:13px;z-index:10;max-width:90vw;text-align:center}
+@media (min-width:900px){#pad{width:130px;height:130px}#grab{width:112px;height:112px}}
+/* 橫拿手機（矮的橫向畫面）：上面合成一列、提示字收起來，讓機台大一點 */
+@media (orientation:landscape) and (max-height:500px) and (min-width:700px){
+  #hud{flex-direction:row;align-items:center;justify-content:space-between}
+  #hud>.row:first-child{display:contents}
+  #bSound{order:3}
+  .hint{display:none}
+}
+@media (max-width:380px){.tools button{padding:3px 8px;font-size:11.5px}.pill{padding:4px 8px}.hint{font-size:11px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<canvas id="cv"></canvas>
+<div id="hud">
+  <div class="row">
+    <div class="left"><button class="pill back" id="bBack" hidden>‹ <span id="tBack">返回</span></button><span class="pill" id="timer">…</span><span class="pill" id="coins">剩 10 次</span><span class="pill demo" id="demoTag" hidden>示範資料</span></div>
+    <button class="pill" id="bSound">音效開</button>
+  </div>
+  <div class="row"><div class="tools">
+    <button id="bAlbum"><span id="tAlbum">收藏冊</span> <span id="nAlbum">0</span></button><button id="bView">↺ 回正</button><button id="bReset">重新擺放</button><button id="bCoin">補充 10 次</button>
+  </div></div>
+</div>
+<div id="msg"></div>
+<div id="controls">
+  <div id="pad" aria-label="搖桿"><img id="knob" src="a/ball_top.webp" alt=""></div>
+  <div class="hint"><span id="tHint">單指拖曳轉動・雙指縮放</span><br><span id="tHintPc"></span></div>
+  <button id="grab" aria-label="抓取"><img src="a/btn_top.webp" alt=""></button>
+</div>
+<div id="loading">時光娃娃機準備中…</div>
+<div id="modal" hidden></div>
+<div id="album" hidden></div>
+<div id="toast" hidden></div>
+<script src="__THREE__"></script>
+<script>
+__GAME__
+</script>
