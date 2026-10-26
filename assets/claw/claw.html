@@ -1187,6 +1187,8 @@ function insets() {
 }
 function layout() {
   const w = window.innerWidth, h = window.innerHeight;
+  // 很大的畫面（電腦全螢幕、高解析度螢幕）降低一點解析度，最多大約 400 萬像素，才不會卡
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1, Math.sqrt(4e6 / Math.max(1, w * h))));
   renderer.setSize(w, h, false);
   const ins = insets(), availH = Math.max(120, h - ins.top - ins.bottom);
   Object.assign(VIEW, { w, h, availH, cyPx: ins.top + availH / 2 });
@@ -1396,6 +1398,7 @@ function tick(dt) {
 function frame(t) {
   if (!TEST) requestAnimationFrame(frame);
   const dt = TEST ? t : Math.min(0.034, (t - last) / 1000 || 0.016); last = t;
+  if (state === "loading") return;   // 還在等照片：畫面被「準備中」蓋住，先不畫（手機可以專心做照片，也省電）
   tick(dt);
   renderer.render(scene, activeCam);
 }
@@ -1448,6 +1451,7 @@ window.addEventListener("message", e => { const d = /** @type {any} */ (e).data;
 document.addEventListener("message", (/** @type {any} */ e) => { try { recv(JSON.parse(e.data)); } catch (er) { } });
 manager.onLoad = () => {
   applyTexts();
+  try { renderer.render(scene, activeCam); } catch (e) { }   // 在「準備中」底下先畫一次：材質和貼圖先準備好，開始時不會卡一下
   if (HOST === "none" || TEST) begin([]);        // 單獨打開：用示範照片
   else send({ type: "ready" });                     // 等 App 傳照片進來（正式模式不會混進示範照片）
 };

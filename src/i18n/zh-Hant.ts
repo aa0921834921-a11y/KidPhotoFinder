@@ -670,7 +670,8 @@ const zhHant = {
   'claw.propLine': '很少見的收藏品',
   'claw.pad': '搖桿',
   'claw.grab': '抓取',
-  'claw.loadFail': '娃娃機載入不了，請關掉再開一次',
+  'claw.loadFail': '娃娃機載入不了，可以再試一次',
+  'claw.retry': '再試一次',
 };
 
 export default zhHant;

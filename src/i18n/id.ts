@@ -668,7 +668,8 @@ const id: Dict = {
   'claw.propLine': 'Barang koleksi langka',
   'claw.pad': 'Joystick',
   'claw.grab': 'Capit',
-  'claw.loadFail': 'Mesin capit tidak bisa dimuat. Tutup lalu buka lagi.',
+  'claw.loadFail': 'Mesin capit tidak bisa dimuat. Silakan coba lagi.',
+  'claw.retry': 'Coba lagi',
 };
 
 export default id;

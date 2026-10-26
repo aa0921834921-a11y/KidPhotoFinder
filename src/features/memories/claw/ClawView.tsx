@@ -2,7 +2,7 @@
  * 時光娃娃機的 3D 畫面（手機）：用 WebView 打開 assets/claw/claw.html（three.js 做的 3D 娃娃機，所有圖都包在檔案裡，不用網路）。
  * App ⇄ 遊戲：遊戲用 window.ReactNativeWebView.postMessage 傳 JSON 過來；App 用 injectJavaScript 呼叫 window.__clawRecv。
  */
-import React, { useEffect, useRef, type MutableRefObject } from 'react';
+import React, { memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { StyleSheet } from 'react-native';
 import { WebView as RNWebView, type WebViewMessageEvent, type WebViewProps } from 'react-native-webview';
 
@@ -16,7 +16,8 @@ export type ClawSend = (msg: object) => void;
 const LS = new RegExp(String.fromCharCode(0x2028), 'g'), PS = new RegExp(String.fromCharCode(0x2029), 'g');
 const js = (v: unknown) => JSON.stringify(v).replace(LS, '\\u2028').replace(PS, '\\u2029');
 
-export default function ClawView({ page, onMessage, sendRef, onCrash }: {
+/** 外面的畫面更新（例如「照片做到第幾張」）不會讓 WebView 重新整理：memo＋固定的 source */
+export default memo(function ClawView({ page, onMessage, sendRef, onCrash }: {
   page: ClawPage; onMessage: (msg: any) => void; sendRef: MutableRefObject<ClawSend | null>; onCrash?: () => void;
 }) {
   const wv = useRef<WVHandle>(null);
@@ -24,10 +25,11 @@ export default function ClawView({ page, onMessage, sendRef, onCrash }: {
     sendRef.current = (msg) => wv.current?.injectJavaScript(`window.__clawRecv&&window.__clawRecv(${js(msg)});true;`);
     return () => { sendRef.current = null; };
   }, [sendRef]);
+  const source = useMemo(() => ({ html: page.html || '', baseUrl: 'https://localhost/' }), [page.html]);
   return (
     <WebView
       ref={wv}
-      source={{ html: page.html || '', baseUrl: 'https://localhost/' }}
+      source={source}
       originWhitelist={['*']}
       style={s.wv}
       containerStyle={s.wv}
@@ -48,6 +50,6 @@ export default function ClawView({ page, onMessage, sendRef, onCrash }: {
       onContentProcessDidTerminate={() => { wv.current?.reload(); }}
     />
   );
-}
+});
 
 const s = StyleSheet.create({ wv: { flex: 1, backgroundColor: '#070b1d' } });

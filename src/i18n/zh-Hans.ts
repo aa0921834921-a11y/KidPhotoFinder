@@ -668,7 +668,8 @@ const zhHans: Dict = {
   'claw.propLine': '很少见的收藏品',
   'claw.pad': '摇杆',
   'claw.grab': '抓取',
-  'claw.loadFail': '娃娃机载入不了，请关掉再打开一次',
+  'claw.loadFail': '娃娃机载入不了，可以再试一次',
+  'claw.retry': '再试一次',
 };
 
 export default zhHans;

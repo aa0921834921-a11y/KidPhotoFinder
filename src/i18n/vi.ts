@@ -668,7 +668,8 @@ const vi: Dict = {
   'claw.propLine': 'Món sưu tầm hiếm có',
   'claw.pad': 'Cần điều khiển',
   'claw.grab': 'Gắp',
-  'claw.loadFail': 'Không tải được máy gắp. Hãy đóng rồi mở lại.',
+  'claw.loadFail': 'Không tải được máy gắp. Bạn có thể thử lại.',
+  'claw.retry': 'Thử lại',
 };
 
 export default vi;

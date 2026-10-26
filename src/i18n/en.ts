@@ -670,7 +670,8 @@ const en: Dict = {
   'claw.propLine': 'A rare collectible',
   'claw.pad': 'Joystick',
   'claw.grab': 'Grab',
-  'claw.loadFail': 'The claw machine couldn\'t load. Please close it and open it again.',
+  'claw.loadFail': 'The claw machine couldn\'t load. You can try again.',
+  'claw.retry': 'Try again',
 };
 
 export default en;

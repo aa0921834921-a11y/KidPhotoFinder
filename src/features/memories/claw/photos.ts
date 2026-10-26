@@ -4,6 +4,7 @@
  * - 日期最早的那個回憶標成「很久沒看的回憶」（球的花紋不一樣）
  * - 示範：用示範照片（畫面上會標「示範資料」），正式模式絕不混進示範照片
  * 遊戲在 WebView 裡，照片要用 data URL 傳進去（WebGL 不能直接讀手機相簿的 content:// 圖）。
+ * 小圖是讀照片時就縮小（不讀整張原圖），一張讀太久就跳過，做好的會留著下次用。
  */
 import { Asset } from 'expo-asset';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
@@ -68,17 +69,33 @@ async function sourceUri(m: Memory, id: string, info?: DB.PhotoInfo): Promise<st
   return previewUri(id, 512).catch(() => null);
 }
 
-/** 縮成小圖（最長邊 side 像素）→ data URL */
+/**
+ * 縮成小圖（最長邊不超過 side 像素）→ data URL。
+ * 讀照片的時候就直接縮小（maxWidth/maxHeight），不會把一千多萬像素的原圖整張讀進記憶體：
+ * 以前是整張讀兩次再縮，13 張要等很久，現在每張只要一下下。
+ */
 export async function smallDataUrl(uri: string, side: number): Promise<string> {
-  const first = await ImageManipulator.manipulate(uri).renderAsync();
-  let ref = first;
-  if (Math.max(first.width, first.height) > side) {
-    const ctx = ImageManipulator.manipulate(uri);
-    ctx.resize(first.width >= first.height ? { width: side } : { height: side });
-    ref = await ctx.renderAsync();
+  const ctx = ImageManipulator.manipulate(uri, { maxWidth: side, maxHeight: side });
+  try {
+    const ref = await ctx.renderAsync();
+    try {
+      const r = await ref.saveAsync({ format: SaveFormat.JPEG, compress: 0.72, base64: true });
+      if (!r.base64) throw new Error('no image');
+      return `data:image/jpeg;base64,${r.base64}`;
+    } finally {
+      ref.release(); // 用完馬上放掉，不等系統回收
+    }
+  } finally {
+    ctx.release();
   }
-  const r = await ref.saveAsync({ format: SaveFormat.JPEG, compress: 0.72, base64: true });
-  return `data:image/jpeg;base64,${r.base64}`;
+}
+
+/** 等太久就放棄（回傳 null），一張讀不到不會讓整台娃娃機卡住 */
+function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((res) => {
+    const t = setTimeout(() => res(null), ms);
+    p.then((v) => { clearTimeout(t); res(v); }, () => { clearTimeout(t); res(null); });
+  });
 }
 
 /** 一次做幾張（同時做太多手機會卡） */
@@ -91,42 +108,48 @@ async function pool<T>(n: number, jobs: (() => Promise<T>)[]): Promise<T[]> {
   return out;
 }
 
-/** 把挑好的照片做成遊戲要的樣子（做不出來的跳過） */
-export async function makePics(data: MemoryData, picked: { m: Memory; id: string }[]): Promise<ClawPic[]> {
+/** 做好的小圖先留著（這次打開 App 期間再玩就不用重做），最多留 60 張 */
+const pics = new Map<string, Promise<string | null>>();
+function smallPic(m: Memory, id: string, info: DB.PhotoInfo | undefined, side: number): Promise<string | null> {
+  const key = `${m.demo ? 'demo' : 'real'}:${side}:${id}`;
+  let job = pics.get(key);
+  if (!job) {
+    job = (async () => {
+      const uri = await sourceUri(m, id, info);
+      return uri ? await smallDataUrl(uri, side) : null;
+    })().catch(() => null);
+    pics.set(key, job);
+    job.then((v) => { if (!v) pics.delete(key); });
+    while (pics.size > 60) pics.delete(pics.keys().next().value!);
+  }
+  return job;
+}
+
+/** 把挑好的照片做成遊戲要的樣子（做不出來的跳過）；每做好一張就回報進度 */
+export async function makePics(data: MemoryData, picked: { m: Memory; id: string }[],
+  onProgress?: (done: number, total: number) => void): Promise<ClawPic[]> {
   // 日期最早的回憶（資料夾有寫日期的才算）
   let oldest: Memory | null = null;
   for (const { m } of picked) if (m.trusted && (!oldest || m.day < oldest.day)) oldest = m;
   const rareMem = picked.length >= 6 && oldest ? oldest.id : null;
-  const done = new Set<string>();
-  const list = await pool(3, picked.map(({ m, id }) => async (): Promise<ClawPic | null> => {
-    try {
-      const info = data.info.get(id);
-      const uri = await sourceUri(m, id, info);
-      if (!uri) return null;
-      const img = await smallDataUrl(uri, 512);
-      const face = info && info.fx != null && info.fy != null && info.fw && info.fh && info.w && info.h
-        ? { fx: (info.fx + info.fw / 2) / info.w, fy: (info.fy + info.fh * 0.5) / info.h } : {};
-      const rare = rareMem === m.id && !done.has(m.id);
-      done.add(m.id);
-      return { id, mem: m.id, img, title: niceTitle(m.title), date: dateLine(m), rare, ...face };
-    } catch {
-      return null;
-    }
+  const rareDone = new Set<string>();
+  let n = 0;
+  onProgress?.(0, picked.length);
+  const list = await pool(4, picked.map(({ m, id }) => async (): Promise<ClawPic | null> => {
+    const info = data.info.get(id);
+    const img = await within(smallPic(m, id, info, 512), 10000);
+    onProgress?.(++n, picked.length);
+    if (!img) return null;
+    const face = info && info.fx != null && info.fy != null && info.fw && info.fh && info.w && info.h
+      ? { fx: (info.fx + info.fw / 2) / info.w, fy: (info.fy + info.fh * 0.5) / info.h } : {};
+    const rare = rareMem === m.id && !rareDone.has(m.id);
+    rareDone.add(m.id);
+    return { id, mem: m.id, img, title: niceTitle(m.title), date: dateLine(m), rare, ...face };
   }));
   return list.filter((x): x is ClawPic => !!x);
 }
 
 /** 收藏冊用的小圖（同一張只做一次） */
-const thumbs = new Map<string, Promise<string | null>>();
 export function thumbOf(data: MemoryData, m: Memory, id: string): Promise<string | null> {
-  const key = `${m.demo ? 'demo' : 'real'}:${id}`;
-  if (!thumbs.has(key)) {
-    thumbs.set(key, (async () => {
-      try {
-        const uri = await sourceUri(m, id, data.info.get(id));
-        return uri ? await smallDataUrl(uri, 240) : null;
-      } catch { return null; }
-    })());
-  }
-  return thumbs.get(key)!;
+  return within(smallPic(m, id, data.info.get(id), 240), 10000);
 }

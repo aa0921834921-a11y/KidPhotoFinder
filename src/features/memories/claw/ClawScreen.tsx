@@ -67,6 +67,9 @@ export default function ClawScreen({ demo: demoParam }: { demo: boolean }) {
   const [page, setPage] = useState<ClawPage | null>(null);
   const [failed, setFailed] = useState(false);
   const [started, setStarted] = useState(false);
+  const [prog, setProg] = useState<{ n: number; total: number } | null>(null); // 照片做到第幾張
+  const [picsReady, setPicsReady] = useState(false);
+  const [attempt, setAttempt] = useState(0);   // 按「再試一次」就整個重來
   const [day, setDay] = useState<Memory | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const empty = !!data && !data.items.length;
@@ -84,38 +87,61 @@ export default function ClawScreen({ demo: demoParam }: { demo: boolean }) {
     if (ready.current && init.current && sendRef.current && !sent.current) { sent.current = true; sendRef.current(init.current); }
   }, []);
 
-  /* ---------- 遊戲頁面 */
-  useEffect(() => { loadPage().then(setPage).catch(() => setFailed(true)); }, []);
+  /* ---------- 遊戲頁面（讀不到的話，按「再試一次」會重讀） */
+  useEffect(() => {
+    if (page) return;
+    let alive = true;
+    loadPage().then((p) => { if (alive) setPage(p); }).catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [page, attempt]);
 
   /* ---------- 資料（換成示範時整個重來） */
   useEffect(() => {
     let alive = true;
-    setData(null); setStarted(false);
+    setData(null); setStarted(false); setPicsReady(false); setProg(null);
     ready.current = false; init.current = null; sent.current = false;
     if (demo) { setData(demoMemories()); return; }
     loadMemories().then((d) => alive && setData(d)).catch(() => alive && setData({ items: [], info: new Map(), demo: false }));
     return () => { alive = false; };
   }, [demo, version]);
 
-  /* ---------- 挑照片、做成小圖 → 傳給遊戲 */
+  /* ---------- 挑照片、做成小圖 → 傳給遊戲（畫面上顯示做到第幾張） */
   useEffect(() => {
     if (!data || !data.items.length) return;
     let alive = true;
+    init.current = null; sent.current = false;
+    setPicsReady(false); setProg(null);
     (async () => {
       kept.current = demo ? [] : await loadKept();
-      const photos = await makePics(data, pickPhotos(data));
+      const photos = await makePics(data, pickPhotos(data), (n, total) => { if (alive) setProg({ n, total }); });
       if (!alive) return;
+      if (!photos.length) { setFailed(true); return; } // 一張都讀不到：不要用示範照片頂替
       init.current = { type: 'init', photos, t: clawTexts(), demo, albumN: kept.current.length };
+      setPicsReady(true);
       trySend();
     })().catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
-  }, [data, demo, trySend]);
+  }, [data, demo, attempt, trySend]);
+
+  /* ---------- 照片都好了，遊戲卻一直沒開始（例如手機的 3D 畫面出問題）：30 秒後讓使用者可以再試一次 */
+  useEffect(() => {
+    if (!picsReady || started || failed) return;
+    const t = setTimeout(() => setFailed(true), 30000);
+    return () => clearTimeout(t);
+  }, [picsReady, started, failed]);
+
+  const onCrash = useCallback(() => setFailed(true), []);
+  const retry = useCallback(() => {
+    ready.current = false; sent.current = false; init.current = null;
+    setStarted(false); setPicsReady(false); setProg(null); setFailed(false);
+    setAttempt((a) => a + 1);
+  }, []);
 
   /* ---------- 遊戲傳來的訊息 */
   const onMessage = useCallback((m: any) => {
     const d = dataRef.current;
     switch (m?.type) {
-      case 'ready': ready.current = true; trySend(); break;
+      case 'ready': ready.current = true; sent.current = false; trySend(); break; // 頁面重新載入過也會再送一次
       case 'started': setStarted(true); break;
       case 'close': router.back(); break;
       case 'haptic': buzz(m.k === 'success' ? 'success' : 'light'); break;
@@ -147,15 +173,19 @@ export default function ClawScreen({ demo: demoParam }: { demo: boolean }) {
   }, [day, started]);
 
   const showGame = !!page && !!data && !empty && !failed;
+  // 準備中的說明：讀回憶 → 照片放進水晶球（第幾張）→ 娃娃機準備中
+  const waitText = !data ? tr('mem.loading')
+    : !picsReady ? `${tr('claw.preparing')}${prog && prog.total ? `  ${prog.n} / ${prog.total}` : ''}`
+    : tr('claw.loading');
   return (
     <View style={[s.root, { paddingTop: ins.top, paddingBottom: ins.bottom }]}>
       <StatusBar style="light" />
-      {showGame ? <ClawView key={demo ? 'demo' : 'real'} page={page!} onMessage={onMessage} sendRef={sendRef} onCrash={() => setFailed(true)} /> : null}
+      {showGame ? <ClawView key={`${demo ? 'demo' : 'real'}-${attempt}`} page={page!} onMessage={onMessage} sendRef={sendRef} onCrash={onCrash} /> : null}
 
       {/* 還在準備：照片放進水晶球 */}
       {!started && !empty && !failed ? (
         <View pointerEvents="none" style={[s.center, { top: ins.top + 140 }]}>
-          <Text style={[font.round, s.loading]}>{data ? tr('claw.preparing') : tr('mem.loading')}</Text>
+          <Text style={[font.round, s.loading]}>{waitText}</Text>
         </View>
       ) : null}
 
@@ -185,9 +215,14 @@ export default function ClawScreen({ demo: demoParam }: { demo: boolean }) {
       {failed ? (
         <View style={[s.empty, { top: ins.top + 150 }]}>
           <Text style={[font.round, s.emptyB]}>{tr('claw.loadFail')}</Text>
-          <Pressable onPress={() => router.back()} style={s.emptyGhost} accessibilityRole="button">
-            <Text style={[font.round, { color: GOLD, fontSize: 15 }]}>{tr('mem.back')}</Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Pressable onPress={retry} style={s.emptyBtn} accessibilityRole="button">
+              <Text style={[font.round, { color: '#2C2008', fontSize: 15, fontWeight: '700' }]}>{tr('claw.retry')}</Text>
+            </Pressable>
+            <Pressable onPress={() => router.back()} style={s.emptyGhost} accessibilityRole="button">
+              <Text style={[font.round, { color: GOLD, fontSize: 15 }]}>{tr('mem.back')}</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
